@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DailySessionStatus {
+  PENDING
+  ROUND_ONE
+  ROUND_TWO
+  ROUND_THREE
+  COMPLETED
+}
+
+enum SessionWordType {
+  NEW
+  REVIEW
+}
+
+enum SessionWordStatus {
+  PENDING
+  PASSED_ROUND_ONE
+  NEEDS_REVIEW
+  PASSED_ROUND_TWO
+  PASSED_ROUND_THREE
+  MARKED_WRONG_BOOK
+}
+
+enum ArticleStyle {
+  EXAM
+  NEWS
+  TED
+}
+
+model User {
+  id               String             @id @default(cuid())
+  email            String             @unique
+  passwordHash     String
+  activeBookId     String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  plans            StudyPlan[]
+  progresses       UserBookProgress[]
+  dailySessions    DailySession[]
+  wrongBookEntries WrongBookEntry[]
+}
+
+model VocabularyBook {
+  id          String             @id @default(cuid())
+  key         String             @unique
+  title       String
+  description String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  words       VocabularyItem[]
+  plans       StudyPlan[]
+  progresses  UserBookProgress[]
+}
+
+model VocabularyItem {
+  id           String             @id @default(cuid())
+  bookId       String
+  word         String
+  phonetic     String?
+  partOfSpeech String?
+  definitions  Json
+  examples     Json?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  book         VocabularyBook     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  sessionWords DailySessionWord[]
+  wrongBook    WrongBookEntry[]
+
+  @@unique([bookId, word])
+  @@index([bookId])
+}
+
+model UserBookProgress {
+  id              String           @id @default(cuid())
+  userId          String
+  bookId          String
+  learnedWordIds  Json
+  reviewedWordIds Json
+  flaggedWordIds  Json
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book            VocabularyBook   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bookId])
+}
+
+model StudyPlan {
+  id              String         @id @default(cuid())
+  userId          String
+  bookId          String
+  dailyWordCount  Int
+  newWordRatio    Int
+  reviewWordRatio Int
+  articleStyle    ArticleStyle
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book            VocabularyBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bookId])
+}
+
+model DailySession {
+  id               String             @id @default(cuid())
+  userId           String
+  bookId           String
+  studyPlanId      String
+  sessionDate      DateTime
+  status           DailySessionStatus
+  articleStyle     ArticleStyle
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book             VocabularyBook     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  studyPlan        StudyPlan          @relation(fields: [studyPlanId], references: [id], onDelete: Cascade)
+  words            DailySessionWord[]
+  articles         GeneratedArticle[]
+  readingQuestions ReadingQuestion[]
+
+  @@unique([userId, sessionDate])
+}
+
+model DailySessionWord {
+  id                String                        @id @default(cuid())
+  sessionId         String
+  vocabularyItemId  String
+  type              SessionWordType
+  status            SessionWordStatus
+  isSelectedUnknown Boolean                       @default(false)
+  reviewAttempts    Int                           @default(0)
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+  session           DailySession                  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  vocabularyItem    VocabularyItem                @relation(fields: [vocabularyItemId], references: [id], onDelete: Cascade)
+  selections        ArticleUnknownWordSelection[]
+  reviewRound       WordReviewRound?
+  readingAnswer     ReadingAnswer?
+}
+
+model GeneratedArticle {
+  id             String                        @id @default(cuid())
+  sessionId      String
+  title          String
+  content        String
+  summary        String
+  translation    String
+  coveredWordIds Json
+  orderIndex     Int
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+  session        DailySession                  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  selections     ArticleUnknownWordSelection[]
+}
+
+model ArticleUnknownWordSelection {
+  id            String           @id @default(cuid())
+  articleId     String
+  sessionWordId String
+  createdAt     DateTime         @default(now())
+  article       GeneratedArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  sessionWord   DailySessionWord @relation(fields: [sessionWordId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, sessionWordId])
+}
+
+model WordReviewRound {
+  id            String           @id @default(cuid())
+  sessionWordId String           @unique
+  choices       Json
+  correctAnswer String
+  explanation   String
+  isPassed      Boolean          @default(false)
+  currentPhase  String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  sessionWord   DailySessionWord @relation(fields: [sessionWordId], references: [id], onDelete: Cascade)
+}
+
+model ReadingQuestion {
+  id            String         @id @default(cuid())
+  sessionId     String
+  sessionWordId String         @unique
+  prompt        String
+  options       Json
+  correctOption String
+  explanation   String
+  translation   String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  session       DailySession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  answer        ReadingAnswer?
+}
+
+model ReadingAnswer {
+  id             String           @id @default(cuid())
+  questionId     String           @unique
+  sessionWordId  String           @unique
+  selectedOption String
+  isCorrect      Boolean
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  question       ReadingQuestion  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  sessionWord    DailySessionWord @relation(fields: [sessionWordId], references: [id], onDelete: Cascade)
+}
+
+model WrongBookEntry {
+  id               String         @id @default(cuid())
+  userId           String
+  vocabularyItemId String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vocabularyItem   VocabularyItem @relation(fields: [vocabularyItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vocabularyItemId])
+}
