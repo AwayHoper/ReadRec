@@ -2,13 +2,13 @@
 
 ## 当前状态
 
-当前 MVP 运行时以内存态数据服务为主，但已经补齐 Prisma 数据库模型，后续可直接迁移到 PostgreSQL。
+当前项目已使用 PostgreSQL 持久化词库学习主链路数据，包含用户、学习计划、每日学习会话、复习题与生词本。
 
 ## 核心实体
 
 - `User`：账号信息、当前激活词库
 - `VocabularyBook`：官方词库元数据
-- `VocabularyItem`：词库单词与静态释义
+- `VocabularyItem`：词库单词与静态释义，包含扁平释义与按词性分组的 `senses`
 - `UserBookProgress`：用户在某词库下的已学/已复习/已标记状态
 - `StudyPlan`：每词库唯一学习计划
 - `DailySession`：用户每日学习会话
@@ -59,7 +59,33 @@
 - `ArticleUnknownWordSelection(articleId, sessionWordId)` 唯一索引
 - `WrongBookEntry(userId, vocabularyItemId)` 唯一索引
 
+## 词库存储约定
+
+- `VocabularyItem.word`：单词正文
+- `VocabularyItem.partOfSpeech`：当前单词包含的词性摘要，例如 `n. v.`
+- `VocabularyItem.definitions`：扁平化中文释义数组，便于兼容简单列表展示
+- `VocabularyItem.senses`：按词性分组的 JSON 数组，例如：
+
+```json
+[
+  { "partOfSpeech": "n.", "definitions": ["信号"] },
+  { "partOfSpeech": "v.", "definitions": ["发信号", "打信号", "示意"] }
+]
+```
+
+- 前端若需要区分词性与释义归属，应优先使用 `senses`
+
+## 当前落库状态
+
+- 已在线上 PostgreSQL 导入 3 本官方词库：
+  - `cet4`
+  - `cet6`
+  - `kaoyan-2`
+- 当前线上总词数：`13581`
+- 当前 `auth`、`dictionary`、`study-plan`、`daily-session`、`learning`、`wrong-book` 已切到 Prisma 持久化
+- 同一单词在不同词库内允许重复存在，但在同一词库内受 `(bookId, word)` 唯一索引约束
+
 ## 同步约束
 
 - 若后续扩展用户自定义词库、后台导入、复杂复习权重，需要更新实体与索引说明
-- 若运行态正式切换到 PostgreSQL，需把迁移命令、种子方式、连接约束补充到本文档
+- 若后续移除遗留内存态服务，需补充清理策略与回归验证要求

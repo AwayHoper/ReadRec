@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { WrongBookEntry } from '../types';
 

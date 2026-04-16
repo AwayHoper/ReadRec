@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { DailySession, ReviewRound } from '../types';
 

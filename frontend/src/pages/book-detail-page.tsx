@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { VocabularyBookSummary } from '../types';
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { SessionWordSummary } from '../types';
 
@@ -14,7 +14,11 @@ export function ReadRoundPage() {
 
   /** Summary: This function submits the selected unknown words for round one. */
   async function submitRoundOneSelections() {
-    return api.submitSelections(selectedSessionWordIds);
+    const articleId = sessionQuery.data?.articles[0]?.id;
+    if (!articleId) {
+      throw new Error('当前没有可提交的文章。');
+    }
+    return api.submitSelections(articleId, selectedSessionWordIds);
   }
 
   /** Summary: This function refreshes session data and moves the flow into round two after a successful submit. */
@@ -50,8 +54,8 @@ export function ReadRoundPage() {
   function renderSelectableWord(word: SessionWordSummary) {
     const isActive = selectedSessionWordIds.includes(word.id);
     return (
-      <button key={word.id} type="button" onClick={function handleToggleWordSelection() { toggleSelectedWord(word.id); }} className={`rounded-full px-4 py-2 ${isActive ? 'bg-coral text-white' : 'bg-sand'}`}>
-        {word.vocabularyItemId}
+        <button key={word.id} type="button" onClick={function handleToggleWordSelection() { toggleSelectedWord(word.id); }} className={`rounded-full px-4 py-2 ${isActive ? 'bg-coral text-white' : 'bg-sand'}`}>
+        {word.word ?? word.vocabularyItemId}
       </button>
     );
   }

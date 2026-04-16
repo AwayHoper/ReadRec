@@ -1,6 +1,6 @@
 import { PropsWithChildren, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AuthResponse, UserProfile } from '../types';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 
 interface AuthContextValue {
   user: UserProfile | null;
@@ -37,6 +37,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   /** Summary: This function clears the current authenticated user from the provider state. */
   function handleLogout() {
+    api.clearAccessToken();
     setUser(null);
   }
 

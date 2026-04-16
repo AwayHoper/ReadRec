@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { PrismaModule } from './common/prisma/prisma.module.js';
 import { AiContentModule } from './modules/ai-content/ai-content.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { DailySessionModule } from './modules/daily-session/daily-session.module.js';
@@ -11,6 +12,7 @@ import { WrongBookModule } from './modules/wrong-book/wrong-book.module.js';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
     AuthModule,
     DictionaryModule,
     StudyPlanModule,

@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { SessionWordSummary } from '../types';
 
@@ -31,7 +31,7 @@ export function SummaryPage() {
     const isActive = selectedWordIds.includes(word.vocabularyItemId);
     return (
       <button key={word.id} onClick={function handleToggleSummaryWord() { toggleWrongBookWord(word.vocabularyItemId); }} className={`rounded-full px-4 py-2 ${isActive ? 'bg-coral text-white' : 'bg-sand'}`}>
-        {word.vocabularyItemId}
+        {word.word ?? word.vocabularyItemId}
       </button>
     );
   }

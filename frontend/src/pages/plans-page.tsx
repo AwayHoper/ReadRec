@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import * as api from '../lib/mock-api';
+import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
 import { StudyPlan, VocabularyBookSummary } from '../types';
 
@@ -10,7 +10,7 @@ export function PlansPage() {
   const queryClient = useQueryClient();
   const planQuery = useQuery({ queryKey: ['plan'], queryFn: api.getCurrentPlan });
   const booksQuery = useQuery({ queryKey: ['books'], queryFn: api.getBooks });
-  const { register, handleSubmit, reset } = useForm({ defaultValues: planQuery.data?.plan });
+  const { register, handleSubmit, reset } = useForm({ defaultValues: planQuery.data?.plan ?? undefined });
 
   useEffect(
     /** Summary: This callback resets the form whenever the latest plan snapshot arrives. */
@@ -35,6 +35,7 @@ export function PlansPage() {
   /** Summary: This function refreshes the cached plan data after a successful save. */
   async function handleSavePlanSuccess() {
     await queryClient.invalidateQueries({ queryKey: ['plan'] });
+    await queryClient.invalidateQueries({ queryKey: ['books'] });
   }
 
   /** Summary: This function submits the current plan form through the mutation layer. */

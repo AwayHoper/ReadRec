@@ -10,8 +10,10 @@ export type SessionWordStatus = 'PENDING' | 'PASSED_ROUND_ONE' | 'NEEDS_REVIEW' 
 export interface UserRecord { id: string; email: string; passwordHash: string; activeBookId: string; }
 /** Summary: This interface represents a supported official vocabulary book. */
 export interface VocabularyBookRecord { id: string; key: string; title: string; description: string; }
+/** Summary: This interface stores one part-of-speech group and its matching Chinese definitions. */
+export interface VocabularySenseRecord { partOfSpeech: string; definitions: string[]; }
 /** Summary: This interface stores a single vocabulary entry inside a book. */
-export interface VocabularyItemRecord { id: string; bookId: string; word: string; phonetic: string; partOfSpeech: string; definitions: string[]; examples: string[]; }
+export interface VocabularyItemRecord { id: string; bookId: string; word: string; phonetic: string; partOfSpeech: string; definitions: string[]; senses: VocabularySenseRecord[]; examples: string[]; }
 /** Summary: This interface tracks user progress within a vocabulary book. */
 export interface UserBookProgressRecord { userId: string; bookId: string; learnedWordIds: string[]; reviewedWordIds: string[]; flaggedWordIds: string[]; }
 /** Summary: This interface describes the editable study plan for one book. */

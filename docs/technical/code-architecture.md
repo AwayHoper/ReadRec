@@ -6,28 +6,58 @@ ReadRec 已完成学习闭环 MVP 的前后端脚手架与核心流程实现：
 
 - `frontend/` 使用 `React + Vite + React Router + TanStack Query + Zustand + Tailwind CSS`
 - `backend/` 使用 `NestJS + JWT + Prisma Schema + Mock/OpenAI Provider 适配层`
-- 当前运行态以后端内存态 `AppDataService` 承载 MVP 数据流，便于本地快速联调
-- `backend/prisma/schema.prisma` 已补齐 PostgreSQL 数据模型，为后续切换真实数据库做好准备
+- 当前词库学习主链路已切换为 PostgreSQL 持久化
+- 后端通过 `PrismaService` 读写用户、计划、会话、词库、生词本等核心学习数据
+- `backend/prisma/schema.prisma` 已落地 PostgreSQL 数据模型，学习链路相关表已在线上库启用
 
 ## 前端分层
 
 - `src/providers/`：全局 Provider，例如认证上下文
 - `src/components/`：布局、路由守卫、通用卡片等可复用组件
 - `src/pages/`：页面级学习流程与管理页面
-- `src/lib/`：当前使用 `mock-api.ts` 对齐后端接口形状，后续可平滑替换为真实 HTTP API
+- `src/lib/`：当前使用 `api.ts` 作为真实 HTTP 请求层，统一封装鉴权与接口调用
 - `src/stores/`：流程内状态，例如三轮学习轮次推进
 - `src/types.ts`：前端统一数据类型
 
 ## 后端模块边界
 
-- `auth`：邮箱密码注册登录、JWT 签发、当前用户信息
-- `dictionary`：官方词库列表、词库详情、按进度筛选词列表
-- `study-plan`：当前词库计划读取、修改、切换词库
-- `daily-session`：每日学习会话生成、抽词、文章快照生成、首页会话读取
-- `learning`：一轮选词、二轮复习答题、三轮阅读题与学习完成
+- `auth`：邮箱密码注册登录、JWT 签发、当前用户信息，使用 Prisma 持久化 `User`
+- `dictionary`：通过 Prisma 读取官方词库列表、词库详情、按进度筛选词列表
+- `study-plan`：通过 Prisma 维护当前词库计划与用户当前激活词库
+- `daily-session`：通过 Prisma 维护每日学习会话、抽词与文章快照
+- `learning`：通过 Prisma 持久化一轮选词、二轮复习答题、三轮阅读题与学习完成
 - `ai-content`：`MockAiProvider` / `OpenAiProvider` 适配层与统一生成接口
-- `wrong-book`：生词本标记、列表、导出
-- `common`：内存态数据、共享模型、ID 工具
+- `wrong-book`：通过 Prisma 持久化生词本标记、列表、导出
+- `common`：Prisma 访问、共享模型、旧内存态数据、ID 工具
+
+## 词库导入约定
+
+- 官方词库通过 `backend/scripts/import-official-books.ts` 从 `words/*.txt` 临时导入
+- 导入脚本会把单词释义同时保存为：
+  - `definitions`：扁平数组
+  - `senses`：按词性分组的 JSON 结构
+- 导入脚本会对同一本词库内的重复单词按 `word` 去重后再批量写入
+- 后续若前端需要按词性展示释义，应读取 `senses`
+
+## 当前持久化边界
+
+- 已切到 PostgreSQL：
+  - `User`
+  - `VocabularyBook`
+  - `VocabularyItem`
+  - `UserBookProgress`
+  - `StudyPlan`
+  - `DailySession`
+  - `DailySessionWord`
+  - `GeneratedArticle`
+  - `ArticleUnknownWordSelection`
+  - `WordReviewRound`
+  - `ReadingQuestion`
+  - `ReadingAnswer`
+  - `WrongBookEntry`
+- 仍保留但不在主流程中使用：
+  - `AppDataService`
+  - `seed-data.ts`
 
 ## MVP 学习流程
 
@@ -41,6 +71,6 @@ ReadRec 已完成学习闭环 MVP 的前后端脚手架与核心流程实现：
 
 ## 后续维护规则
 
-- 若前端从 `mock-api.ts` 切换到真实接口，需同步更新本文档中的数据流说明
-- 若后端从 `AppDataService` 切换到 Prisma 持久化实现，需同步更新持久化章节与模块职责
+- 若前端真实接口返回结构变化，需同步更新本文档中的数据流说明
+- 若后续移除遗留的 `AppDataService` 与 `seed-data.ts`，需同步更新持久化章节与模块职责
 - 若学习流程轮次、状态机或 AI Provider 协议变化，需同步更新本文档与 `database.md`

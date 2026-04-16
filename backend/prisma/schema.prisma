@@ -58,6 +58,7 @@ model VocabularyBook {
   words       VocabularyItem[]
   plans       StudyPlan[]
   progresses  UserBookProgress[]
+  dailySessions DailySession[]
 }
 
 model VocabularyItem {
@@ -67,6 +68,7 @@ model VocabularyItem {
   phonetic     String?
   partOfSpeech String?
   definitions  Json
+  senses       Json
   examples     Json?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -105,6 +107,7 @@ model StudyPlan {
   updatedAt       DateTime       @updatedAt
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   book            VocabularyBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  dailySessions   DailySession[]
 
   @@unique([userId, bookId])
 }

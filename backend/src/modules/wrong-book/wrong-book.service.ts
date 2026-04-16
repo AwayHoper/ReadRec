@@ -1,41 +1,57 @@
 import { Injectable } from '@nestjs/common';
-import { AppDataService } from '../../common/data/app-data.service.js';
-import { createId } from '../../common/utils/id.util.js';
+import { PrismaService } from '../../common/prisma/prisma.service.js';
 
 @Injectable()
 export class WrongBookService {
-  constructor(private readonly appDataService: AppDataService) {}
+  constructor(private readonly prismaService: PrismaService) {}
 
   /** Summary: This method returns the user's wrong-book list with linked vocabulary details. */
-  getWrongBook(userId: string) {
-    const state = this.appDataService.getState();
-    return state.wrongBookEntries.filter((item) => item.userId === userId).map((entry) => {
-      const word = state.words.find((item) => item.id === entry.vocabularyItemId)!;
-      return {
-        id: entry.id,
-        wordId: word.id,
-        word: word.word,
-        definitions: word.definitions,
-        phonetic: word.phonetic
-      };
+  async getWrongBook(userId: string) {
+    const entries = await this.prismaService.wrongBookEntry.findMany({
+      where: {
+        userId
+      },
+      include: {
+        vocabularyItem: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
     });
+
+    return entries.map((entry) => ({
+      id: entry.id,
+      wordId: entry.vocabularyItem.id,
+      word: entry.vocabularyItem.word,
+      definitions: Array.isArray(entry.vocabularyItem.definitions) ? entry.vocabularyItem.definitions : [],
+      phonetic: entry.vocabularyItem.phonetic ?? ''
+    }));
   }
 
   /** Summary: This method marks words from the summary page into the user's wrong-book list. */
-  markWords(userId: string, vocabularyItemIds: string[]) {
-    vocabularyItemIds.forEach((vocabularyItemId) => {
-      this.appDataService.addWrongBookEntry({
-        id: createId('wrong-book'),
-        userId,
-        vocabularyItemId
+  async markWords(userId: string, vocabularyItemIds: string[]) {
+    for (const vocabularyItemId of vocabularyItemIds) {
+      await this.prismaService.wrongBookEntry.upsert({
+        where: {
+          userId_vocabularyItemId: {
+            userId,
+            vocabularyItemId
+          }
+        },
+        update: {},
+        create: {
+          userId,
+          vocabularyItemId
+        }
       });
-    });
+    }
+
     return this.getWrongBook(userId);
   }
 
   /** Summary: This method exports the wrong-book list as a plain-text payload. */
-  exportWrongBook(userId: string) {
-    const lines = this.getWrongBook(userId).map((item) => `${item.word}: ${item.definitions.join(' / ')}`);
+  async exportWrongBook(userId: string) {
+    const lines = (await this.getWrongBook(userId)).map((item) => `${item.word}: ${item.definitions.join(' / ')}`);
     return {
       filename: 'wrong-book.txt',
       content: lines.join('\n')
