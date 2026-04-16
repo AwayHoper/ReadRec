@@ -109,7 +109,7 @@ export class StudyPlanService {
     };
   }
 
-  /** Summary: This method switches the active book and lazily creates default plan data when needed. */
+  /** Summary: This method switches the active book and returns the saved plan snapshot for that book. */
   async switchBook(userId: string, bookId: string) {
     const [user, book] = await Promise.all([
       this.prismaService.user.findUnique({
@@ -136,24 +136,6 @@ export class StudyPlanService {
       },
       data: {
         activeBookId: bookId
-      }
-    });
-
-    await this.prismaService.studyPlan.upsert({
-      where: {
-        userId_bookId: {
-          userId,
-          bookId
-        }
-      },
-      update: {},
-      create: {
-        userId,
-        bookId,
-        dailyWordCount: 6,
-        newWordRatio: 2,
-        reviewWordRatio: 1,
-        articleStyle: 'EXAM'
       }
     });
 

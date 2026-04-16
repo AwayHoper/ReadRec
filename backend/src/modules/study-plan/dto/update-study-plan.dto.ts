@@ -7,19 +7,19 @@ export class UpdateStudyPlanDto {
   /** Summary: This field captures the target number of daily words. */
   @IsInt()
   @Min(1)
-  @Max(20)
+  @Max(200)
   dailyWordCount!: number;
 
   /** Summary: This field captures the plan's new-word ratio numerator. */
   @IsInt()
   @Min(1)
-  @Max(5)
+  @Max(1)
   newWordRatio!: number;
 
   /** Summary: This field captures the plan's review-word ratio numerator. */
   @IsInt()
   @Min(1)
-  @Max(5)
+  @Max(4)
   reviewWordRatio!: number;
 
   /** Summary: This field captures the preferred article style for generation. */

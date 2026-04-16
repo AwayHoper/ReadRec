@@ -75,6 +75,35 @@
 
 - 前端若需要区分词性与释义归属，应优先使用 `senses`
 
+## 学习状态判定
+
+- `GET /books/:bookId/words` 返回分页单词列表时，会附带 `isLearned`
+- `isLearned` 的判定依据为当前用户在该词库下是否已存在该单词的学习进度记录
+- 产品展示口径：
+  - `isLearned = true` 时显示“已学习”
+  - `isLearned = false` 时显示“未学习”
+
+## 学习计划字段约定
+
+- `StudyPlan.dailyWordCount`：当前版本表示“每日总词量”
+- `StudyPlan.newWordRatio`：当前版本固定为 `1`
+- `StudyPlan.reviewWordRatio`：当前版本表示复习倍数，范围为 `1..4`
+
+例如：
+
+- 若前端用户选择比例 `1:3`，新词方案 `10`
+- 则落库为：
+  - `dailyWordCount = 40`
+  - `newWordRatio = 1`
+  - `reviewWordRatio = 3`
+
+## 每日抽词规则
+
+- 当日新词数和复习词数根据 `dailyWordCount` 与比例字段共同推导
+- 若一侧候选不足，由另一侧补齐
+- 生词本条目在复习词候选中优先级更高
+- 最终选中的单词在写入 `DailySessionWord` 前会做乱序处理
+
 ## 当前落库状态
 
 - 已在线上 PostgreSQL 导入 3 本官方词库：

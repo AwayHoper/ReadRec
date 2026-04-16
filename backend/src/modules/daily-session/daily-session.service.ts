@@ -82,19 +82,36 @@ export class DailySessionService {
       throw new NotFoundException('当前词库尚未配置学习计划。');
     }
 
-    const learnedWordIds = normalizeStringArray(progress?.learnedWordIds);
-    const flaggedWordIds = normalizeStringArray(progress?.flaggedWordIds);
+    const availableWords = bookWords.items;
+    const wrongBookEntries = await this.prismaService.wrongBookEntry.findMany({
+      where: {
+        userId,
+        vocabularyItem: {
+          bookId: user.activeBookId
+        }
+      },
+      include: {
+        vocabularyItem: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const learnedWordIdSet = new Set(normalizeStringArray(progress?.learnedWordIds));
+    const prioritizedReviewWordIds = wrongBookEntries.map((entry) => entry.vocabularyItemId);
     const selectedWords = selectDailyWords({
       dailyWordCount: plan.dailyWordCount,
       newWordRatio: plan.newWordRatio,
       reviewWordRatio: plan.reviewWordRatio,
-      newWordIds: bookWords.filter((item) => !learnedWordIds.includes(item.id)).map((item) => item.id),
-      reviewWordIds: bookWords.filter((item) => learnedWordIds.includes(item.id)).map((item) => item.id),
-      flaggedReviewWordIds: flaggedWordIds
+      newWordIds: availableWords.filter((item) => !learnedWordIdSet.has(item.id)).map((item) => item.id),
+      reviewWordIds: availableWords.filter((item) => learnedWordIdSet.has(item.id)).map((item) => item.id),
+      prioritizedReviewWordIds
     });
 
+    const availableWordById = new Map(availableWords.map((word) => [word.id, word]));
     const selectedWordRecords = selectedWords.map((item) => {
-      const vocabularyItem = bookWords.find((word) => word.id === item.wordId)!;
+      const vocabularyItem = availableWordById.get(item.wordId)!;
       return {
         id: createId('session-word'),
         vocabularyItemId: vocabularyItem.id,
@@ -105,10 +122,11 @@ export class DailySessionService {
         vocabularyItem
       };
     });
+    const shuffledSelectedWordRecords = shuffleArray(selectedWordRecords);
 
     const articles = await this.aiContentService.generateArticles({
       style: plan.articleStyle,
-      words: selectedWordRecords.map((item) => ({
+      words: shuffledSelectedWordRecords.map((item) => ({
         id: item.vocabularyItem.id,
         word: item.vocabularyItem.word,
         definitions: item.vocabularyItem.definitions
@@ -118,38 +136,44 @@ export class DailySessionService {
     const { start } = createTodayRange();
     const sessionId = createId('session');
 
-    await this.prismaService.dailySession.create({
-      data: {
-        id: sessionId,
-        userId,
-        bookId: user.activeBookId,
-        studyPlanId: plan.id,
-        sessionDate: start,
-        status: 'PENDING',
-        articleStyle: plan.articleStyle,
-        words: {
-          create: selectedWordRecords.map((item) => ({
-            id: item.id,
-            vocabularyItemId: item.vocabularyItemId,
-            type: item.type,
-            status: item.status,
-            isSelectedUnknown: item.isSelectedUnknown,
-            reviewAttempts: item.reviewAttempts
-          }))
-        },
-        articles: {
-          create: articles.map((article, index) => ({
-            id: createId('article'),
-            title: article.title,
-            content: article.content,
-            summary: article.summary,
-            translation: article.translation,
-            coveredWordIds: article.coveredWordIds as unknown as Prisma.InputJsonValue,
-            orderIndex: index
-          }))
+    try {
+      await this.prismaService.dailySession.create({
+        data: {
+          id: sessionId,
+          userId,
+          bookId: user.activeBookId,
+          studyPlanId: plan.id,
+          sessionDate: start,
+          status: 'PENDING',
+          articleStyle: plan.articleStyle,
+          words: {
+            create: shuffledSelectedWordRecords.map((item) => ({
+              id: item.id,
+              vocabularyItemId: item.vocabularyItemId,
+              type: item.type,
+              status: item.status,
+              isSelectedUnknown: item.isSelectedUnknown,
+              reviewAttempts: item.reviewAttempts
+            }))
+          },
+          articles: {
+            create: articles.map((article, index) => ({
+              id: createId('article'),
+              title: article.title,
+              content: article.content,
+              summary: article.summary,
+              translation: article.translation,
+              coveredWordIds: article.coveredWordIds as unknown as Prisma.InputJsonValue,
+              orderIndex: index
+            }))
+          }
         }
+      });
+    } catch (error) {
+      if (!isUniqueSessionConstraintError(error)) {
+        throw error;
       }
-    });
+    }
 
     const createdSession = await this.findTodaySession(userId);
     if (!createdSession) {
@@ -185,6 +209,30 @@ export class DailySessionService {
       }
     });
   }
+}
+
+function isUniqueSessionConstraintError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+
+  const prismaError = error as { code?: string; meta?: { target?: unknown } };
+  if (prismaError.code !== 'P2002') {
+    return false;
+  }
+
+  const target = Array.isArray(prismaError.meta?.target) ? prismaError.meta?.target : [];
+  return target.includes('userId') && target.includes('sessionDate');
+}
+
+/** Summary: This helper shuffles a list in place-safe form before persistence and article generation. */
+function shuffleArray<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
 }
 
 /** Summary: This helper converts one Prisma daily-session aggregate into the response shape used by the frontend. */

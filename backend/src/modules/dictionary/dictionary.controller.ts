@@ -22,7 +22,24 @@ export class DictionaryController {
 
   /** Summary: This endpoint returns the selected book's words filtered by progress status when requested. */
   @Get(':bookId/words')
-  getBookWords(@Req() request: Request & { user: { sub: string } }, @Param('bookId') bookId: string, @Query('status') status?: string) {
-    return this.dictionaryService.getBookWords(request.user.sub, bookId, status);
+  getBookWords(
+    @Req() request: Request & { user: { sub: string } },
+    @Param('bookId') bookId: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string
+  ) {
+    return this.dictionaryService.getBookWords(
+      request.user.sub,
+      bookId,
+      status,
+      normalizePositiveInteger(page, 1),
+      normalizePositiveInteger(pageSize, 50)
+    );
   }
+}
+
+function normalizePositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

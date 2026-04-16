@@ -1,4 +1,4 @@
-import { AuthResponse, DailySession, ReadingQuestion, ReviewRound, StudyPlan, UserProfile, VocabularyBookSummary, WrongBookEntry } from "../types";
+import { AuthResponse, BookWordPage, DailySession, ReadingQuestion, ReviewRoundResponse, StudyPlan, UserProfile, VocabularyBookSummary, WrongBookEntry } from "../types";
 
 const ACCESS_TOKEN_STORAGE_KEY = "readrec_access_token";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
@@ -72,14 +72,33 @@ export async function me(): Promise<UserProfile | null> {
 
   try {
     return await request<UserProfile>("/auth/me");
-  } catch {
-    return null;
+  } catch (error) {
+    if (!getAccessToken()) {
+      return null;
+    }
+    throw error;
   }
 }
 
 /** Summary: This function returns all official vocabulary books from the backend. */
 export async function getBooks() {
   return request<VocabularyBookSummary[]>("/books");
+}
+
+/** Summary: This function returns one page of words for the selected official book. */
+export async function getBookWords(bookId: string, page?: number, pageSize?: number): Promise<BookWordPage> {
+  const searchParams = new URLSearchParams();
+
+  if (typeof page === "number") {
+    searchParams.set("page", String(page));
+  }
+
+  if (typeof pageSize === "number") {
+    searchParams.set("pageSize", String(pageSize));
+  }
+
+  const query = searchParams.toString();
+  return request<BookWordPage>(`/books/${bookId}/words${query ? `?${query}` : ""}`);
 }
 
 /** Summary: This function returns the current persisted study plan snapshot. */
@@ -92,6 +111,14 @@ export async function updatePlan(nextPlan: Omit<StudyPlan, "id" | "userId">) {
   return request<{ activeBookId: string; plan: StudyPlan }>("/study-plans/current", {
     method: "PUT",
     body: JSON.stringify(nextPlan)
+  });
+}
+
+/** Summary: This function switches the active book and returns that book's plan snapshot. */
+export async function switchBook(bookId: string) {
+  return request<{ activeBookId: string; plan: StudyPlan | null }>("/study-plans/switch-book", {
+    method: "POST",
+    body: JSON.stringify({ bookId })
   });
 }
 
@@ -109,8 +136,8 @@ export async function submitSelections(articleId: string, sessionWordIds: string
 }
 
 /** Summary: This function returns the current round-two review state. */
-export async function getReviewRounds(): Promise<{ sessionId: string; status: string; rounds: ReviewRound[] }> {
-  return request<{ sessionId: string; status: string; rounds: ReviewRound[] }>("/learning/review-round");
+export async function getReviewRounds(): Promise<ReviewRoundResponse> {
+  return request<ReviewRoundResponse>("/learning/review-round");
 }
 
 /** Summary: This function checks one round-two answer through the backend. */

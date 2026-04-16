@@ -69,6 +69,26 @@ ReadRec 已完成学习闭环 MVP 的前后端脚手架与核心流程实现：
 6. 三轮基于已标记生词生成阅读题，提交完成后进入总结页。
 7. 总结页可把词加入生词本，并支持 txt 导出。
 
+## 计划页与词库详情页
+
+- 首页不再展示官方词库，官方词库入口统一放在“计划”页
+- “计划”页先读取 `GET /books` 和 `GET /study-plans/current`
+- 页面上方渲染官方词库卡片，下方渲染学习计划模块
+- 计划模块使用比例调节器、固定方案卡片与动态预测来生成最终计划参数
+- 用户点击词库卡片后，会通过 `POST /study-plans/switch-book` 切换当前激活词库并恢复该词库的计划快照
+- 保存计划时，前端把当前方案映射成 `PUT /study-plans/current` 所需的 `dailyWordCount / newWordRatio / reviewWordRatio`
+- 词库详情页通过 `GET /books/:bookId/words?page=&pageSize=` 读取分页单词列表
+- 词库详情页优先渲染 `senses`，并展示后端返回的 `isLearned`
+
+## v0.5.0 计划优化约定
+
+- `dailyWordCount` 在当前版本中代表“每日总词量”，而不是单独的新词量
+- `newWordRatio` 固定为 `1`
+- `reviewWordRatio` 取值范围为 `1..4`
+- 前端方案卡片中的新词档位固定为 `5 / 10 / 20 / 40`
+- 动态预测使用当前词库 `totalWordCount - learnedCount` 作为剩余新词量
+- 切换词库后，若该词库已有保存计划，则恢复该计划映射出的比例和方案档位；否则回退到默认档位
+
 ## 后续维护规则
 
 - 若前端真实接口返回结构变化，需同步更新本文档中的数据流说明
