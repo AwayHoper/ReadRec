@@ -1,4 +1,4 @@
-import { AuthResponse, DailySession, ReadingQuestion, ReviewRound, StudyPlan, VocabularyBookSummary, WrongBookEntry } from '../types';
+import { AuthResponse, DailySession, DashboardHomeResponse, ReadingQuestion, ReviewRound, StudyPlan, VocabularyBookSummary, WrongBookEntry } from '../types';
 
 const books: VocabularyBookSummary[] = [
   { id: 'book-kaoyan', key: 'kaoyan-2', title: '考研英语二词库', description: '面向考研英语二语境的官方词库。', learnedCount: 0, reviewedCount: 0, totalWordCount: 4 },
@@ -42,6 +42,105 @@ export async function getCurrentPlan() { return { activeBookId: plan.bookId, pla
 export async function updatePlan(nextPlan: Omit<StudyPlan, 'id' | 'userId'>) { plan = { ...plan, ...nextPlan }; return { activeBookId: plan.bookId, plan }; }
 /** Summary: This function returns the current daily session snapshot. */
 export async function getTodaySession(): Promise<DailySession> { return session; }
+/** Summary: This function returns the mock homepage aggregate payload. */
+export async function getDashboardHome(): Promise<DashboardHomeResponse> {
+  const activeBook = books.find((book) => book.id === plan.bookId) ?? null;
+  const hasCompletedBatchToday = session.status === 'COMPLETED';
+
+  return {
+    activeBook: activeBook ? {
+      id: activeBook.id,
+      key: activeBook.key,
+      title: activeBook.title,
+      description: activeBook.description,
+      totalWordCount: activeBook.totalWordCount,
+      learnedCount: activeBook.learnedCount,
+      reviewedCount: activeBook.reviewedCount
+    } : null,
+    plan,
+    today: {
+      date: session.sessionDate,
+      state: hasCompletedBatchToday ? 'completed' : 'pending',
+      target: {
+        newCount: 4,
+        reviewCount: 2,
+        totalCount: plan.dailyWordCount
+      },
+      learnedUniqueWordCount: hasCompletedBatchToday ? session.words.length : 0,
+      completedBatchCount: hasCompletedBatchToday ? session.batchIndex : 0
+    },
+    cta: {
+      mode: hasCompletedBatchToday ? 'continue' : 'start',
+      label: hasCompletedBatchToday ? '再学一轮' : '开始今日学习'
+    },
+    mastery: {
+      familiarCount: activeBook?.reviewedCount ?? 0,
+      fuzzyCount: activeBook?.learnedCount ?? 0,
+      unseenCount: Math.max(0, (activeBook?.totalWordCount ?? 0) - (activeBook?.learnedCount ?? 0)),
+      totalWordCount: activeBook?.totalWordCount ?? 0
+    },
+    streaks: {
+      calendar: [{
+        date: session.sessionDate,
+        completed: hasCompletedBatchToday,
+        completedBatchCount: hasCompletedBatchToday ? session.batchIndex : 0,
+        learnedUniqueWordCount: hasCompletedBatchToday ? session.words.length : 0,
+        intensity: hasCompletedBatchToday ? 'medium' : 'none'
+      }],
+      totalDays: hasCompletedBatchToday ? 1 : 0,
+      currentStreakDays: hasCompletedBatchToday ? 1 : 0,
+      remainingDays: null,
+      estimatedFinishDate: null
+    },
+    encouragement: {
+      tone: hasCompletedBatchToday ? 'praise' : 'encourage',
+      message: hasCompletedBatchToday ? '今天已经完成一轮，继续保持。' : '开始今天的学习，保持节奏。'
+    },
+    history: {
+      lastCompletedDate: hasCompletedBatchToday ? session.sessionDate : null,
+      lastCompletedBatchWordCount: hasCompletedBatchToday ? session.words.length : 0,
+      activeBookTitle: activeBook?.title ?? null
+    }
+  };
+}
+/** Summary: This function returns the current unfinished mock batch or creates the next same-day batch. */
+export async function createNextSession(): Promise<DailySession> {
+  if (session.status !== 'COMPLETED') {
+    return session;
+  }
+
+  const nextBatchIndex = session.batchIndex + 1;
+  session = {
+    ...session,
+    id: `session-${nextBatchIndex}`,
+    batchIndex: nextBatchIndex,
+    status: 'PENDING',
+    words: session.words.map((word) => ({
+      ...word,
+      status: 'PENDING',
+      isSelectedUnknown: false,
+      reviewAttempts: 0
+    })),
+    articles: session.articles.map((article, index) => ({
+      ...article,
+      id: `article-${nextBatchIndex}-${index + 1}`,
+      sessionId: `session-${nextBatchIndex}`
+    })),
+    reviewRounds: session.reviewRounds.map((round) => ({
+      ...round,
+      currentPhase: 'NOTES',
+      isPassed: false
+    })),
+    readingQuestions: session.readingQuestions.map((question, index) => ({
+      ...question,
+      id: `q${nextBatchIndex}-${index + 1}`,
+      sessionId: `session-${nextBatchIndex}`
+    })),
+    readingAnswers: []
+  };
+
+  return session;
+}
 /** Summary: This function simulates selecting unknown words during round one. */
 export async function submitSelections(sessionWordIds: string[]) { session.words = session.words.map((word) => ({ ...word, isSelectedUnknown: sessionWordIds.includes(word.id), status: sessionWordIds.includes(word.id) ? 'NEEDS_REVIEW' : 'PASSED_ROUND_ONE' })); session.status = 'ROUND_TWO'; return session; }
 /** Summary: This function returns the current review-round state. */
