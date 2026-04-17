@@ -75,7 +75,19 @@ export class DailySessionService {
 
   /** Summary: This method transitions today's session into round one without regenerating the snapshot. */
   async startTodaySession(userId: string) {
-    const session = await this.getTodaySession(userId);
+    const activeSession = await this.findLatestActiveSession(userId);
+    if (activeSession && activeSession.status !== 'PENDING') {
+      return mapDailySession(activeSession);
+    }
+
+    if (!activeSession) {
+      const latestTodaySession = await this.findLatestTodaySession(userId);
+      if (latestTodaySession) {
+        return mapDailySession(latestTodaySession);
+      }
+    }
+
+    const session = activeSession ? mapDailySession(activeSession) : await this.createSessionBatch(userId, 1);
     await this.prismaService.dailySession.update({
       where: {
         id: session.id

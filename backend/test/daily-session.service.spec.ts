@@ -27,6 +27,28 @@ describe('DailySessionService multi-batch behavior', function runDailySessionSer
     expect(prismaService.dailySession.create).not.toHaveBeenCalled();
   });
 
+  it('does not reopen the latest completed batch when start is requested after finishing today', async function verifyStartDoesNotReopenCompletedBatch() {
+    const prismaService = createPrismaStubWithBatches([
+      createSessionRecord({
+        id: 'session-1',
+        batchIndex: 1,
+        status: 'COMPLETED'
+      }),
+      createSessionRecord({
+        id: 'session-2',
+        batchIndex: 2,
+        status: 'COMPLETED'
+      })
+    ]);
+    const service = createService(prismaService);
+
+    const session = await service.startTodaySession('user-1');
+
+    expect(session.id).toBe('session-2');
+    expect(session.status).toBe('COMPLETED');
+    expect(prismaService.dailySession.update).not.toHaveBeenCalled();
+  });
+
   it('creates batch 2 after batch 1 is completed on the same day', async function verifyCreateSecondBatch() {
     const prismaService = createPrismaStubWithBatches([
       createSessionRecord({
@@ -143,6 +165,15 @@ function createPrismaStubWithBatches(seedSessions: ReturnType<typeof createSessi
     dailySession: {
       findFirst: vi.fn(async (args?: Record<string, any>) => findFirstSession(sessions, args)),
       findMany: vi.fn(async (args?: Record<string, any>) => findManySessions(sessions, args)),
+      update: vi.fn(async (args: Record<string, any>) => {
+        const session = sessions.find((item) => item.id === args.where.id);
+        if (!session) {
+          return null;
+        }
+
+        Object.assign(session, args.data);
+        return session;
+      }),
       create: vi.fn(async (args: Record<string, any>) => {
         const createdSession = createSessionRecord({
           id: args.data.id,
