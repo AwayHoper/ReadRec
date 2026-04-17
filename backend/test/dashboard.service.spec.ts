@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTodayRange } from '../src/common/prisma/prisma-mappers.js';
 import { DashboardService } from '../src/modules/dashboard/dashboard.service.js';
 
@@ -170,6 +170,75 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
     expect(result.streaks.currentStreakDays).toBe(0);
   });
 
+  it('reads aggregate inputs through a transaction and uses targeted completed-session queries', async function verifyTargetedSnapshotReads() {
+    const prismaService = createDashboardPrismaStub({
+      sessions: [
+        createSessionRecord({
+          id: 'session-today-completed',
+          batchIndex: 1,
+          status: 'COMPLETED',
+          vocabularyItemIds: ['w1', 'w2'],
+          sessionDate: offsetUtcDay(0)
+        }),
+        createSessionRecord({
+          id: 'session-yesterday-completed',
+          batchIndex: 1,
+          status: 'COMPLETED',
+          vocabularyItemIds: ['w3'],
+          sessionDate: offsetUtcDay(-1)
+        }),
+        createSessionRecord({
+          id: 'session-today-pending',
+          batchIndex: 2,
+          status: 'ROUND_ONE',
+          vocabularyItemIds: ['w4'],
+          sessionDate: offsetUtcDay(0)
+        })
+      ]
+    });
+    const service = new DashboardService(prismaService);
+
+    await service.getHome('user-1');
+
+    expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+    expect(prismaService.dailySession.findMany).toHaveBeenCalledTimes(2);
+    expect(prismaService.dailySession.findFirst).toHaveBeenCalledTimes(1);
+
+    const todayCompletedQuery = prismaService.dailySession.findMany.mock.calls.find((call) => call[0]?.where?.sessionDate?.gte);
+    expect(todayCompletedQuery?.[0]).toMatchObject({
+      where: {
+        userId: 'user-1',
+        bookId: 'book-1',
+        status: 'COMPLETED'
+      }
+    });
+
+    const completedHistoryQuery = prismaService.dailySession.findMany.mock.calls.find((call) => !call[0]?.where?.sessionDate);
+    expect(completedHistoryQuery?.[0]).toMatchObject({
+      where: {
+        userId: 'user-1',
+        bookId: 'book-1',
+        status: 'COMPLETED'
+      },
+      select: {
+        sessionDate: true,
+        words: {
+          select: {
+            vocabularyItemId: true
+          }
+        }
+      }
+    });
+
+    expect(prismaService.dailySession.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        userId: 'user-1',
+        bookId: 'book-1',
+        status: 'COMPLETED'
+      }
+    });
+  });
+
   it('throws when the user does not exist', async function verifyMissingUser() {
     const service = new DashboardService(createDashboardPrismaStub({
       user: null
@@ -264,27 +333,36 @@ function createDashboardPrismaStub(options: DashboardPrismaStubOptions = {}) {
     })
   ];
 
-  return {
+  const sessionFindMany = vi.fn(async (args?: Record<string, any>) => findManySessions(sessions, args));
+  const sessionFindFirst = vi.fn(async (args?: Record<string, any>) => findFirstSession(sessions, args));
+
+  const prismaLike = {
     user: {
-      findUnique: async () => user
+      findUnique: vi.fn(async () => user)
     },
     vocabularyBook: {
-      findUnique: async () => book ? {
+      findUnique: vi.fn(async () => book ? {
         ...book,
         _count: {
           words: totalWordCount
         }
-      } : null
+      } : null)
     },
     studyPlan: {
-      findUnique: async () => plan
+      findUnique: vi.fn(async () => plan)
     },
     userBookProgress: {
-      findUnique: async () => progress
+      findUnique: vi.fn(async () => progress)
     },
     dailySession: {
-      findMany: async () => sessions
+      findMany: sessionFindMany,
+      findFirst: sessionFindFirst
     }
+  };
+
+  return {
+    ...prismaLike,
+    $transaction: vi.fn(async (callback: (transactionClient: typeof prismaLike) => unknown) => callback(prismaLike))
   };
 }
 
@@ -324,4 +402,83 @@ function offsetUtcDay(dayOffset: number) {
 
 function offsetUtcDateString(dayOffset: number) {
   return offsetUtcDay(dayOffset).toISOString().slice(0, 10);
+}
+
+function findFirstSession(sessions: SessionRecord[], args?: Record<string, any>) {
+  return findManySessions(sessions, args)[0] ?? null;
+}
+
+function findManySessions(sessions: SessionRecord[], args?: Record<string, any>) {
+  const where = args?.where ?? {};
+  const selectedSessions = sessions.filter((session) => {
+    if (where.userId && session.userId !== where.userId) {
+      return false;
+    }
+
+    if (where.bookId && session.bookId !== where.bookId) {
+      return false;
+    }
+
+    if (where.status && session.status !== where.status) {
+      return false;
+    }
+
+    const gte = where.sessionDate?.gte as Date | undefined;
+    const lt = where.sessionDate?.lt as Date | undefined;
+    if (gte && session.sessionDate < gte) {
+      return false;
+    }
+    if (lt && session.sessionDate >= lt) {
+      return false;
+    }
+
+    return true;
+  });
+
+  const orderedSessions = Array.isArray(args?.orderBy) ? [...selectedSessions].sort((left, right) => {
+    for (const order of args.orderBy) {
+      if (order.sessionDate) {
+        const delta = left.sessionDate.getTime() - right.sessionDate.getTime();
+        if (delta !== 0) {
+          return order.sessionDate === 'asc' ? delta : -delta;
+        }
+      }
+      if (order.batchIndex) {
+        const delta = left.batchIndex - right.batchIndex;
+        if (delta !== 0) {
+          return order.batchIndex === 'asc' ? delta : -delta;
+        }
+      }
+    }
+    return 0;
+  }) : selectedSessions;
+
+  return orderedSessions.map((session) => selectSessionShape(session, args));
+}
+
+function selectSessionShape(session: SessionRecord, args?: Record<string, any>) {
+  if (args?.select) {
+    return {
+      ...(args.select.sessionDate ? { sessionDate: session.sessionDate } : {}),
+      ...(args.select.batchIndex ? { batchIndex: session.batchIndex } : {}),
+      ...(args.select.words ? {
+        words: session.words.map((word) => ({
+          ...(args.select.words.select?.vocabularyItemId ? { vocabularyItemId: word.vocabularyItemId } : {}),
+          ...(args.select.words.select?.id ? { id: word.id } : {})
+        }))
+      } : {})
+    };
+  }
+
+  if (args?.include?.words?.select) {
+    return {
+      ...session,
+      words: session.words.map((word) => ({
+        ...(args.include.words.select.vocabularyItemId ? { vocabularyItemId: word.vocabularyItemId } : {}),
+        ...(args.include.words.select.id ? { id: word.id } : {})
+      }))
+    };
+  }
+
+  return session;
 }

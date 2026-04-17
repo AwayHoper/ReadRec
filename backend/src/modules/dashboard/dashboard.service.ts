@@ -1,12 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { createTodayRange, normalizeStringArray } from '../../common/prisma/prisma-mappers.js';
 import { PrismaService } from '../../common/prisma/prisma.service.js';
 
 type DashboardSessionRecord = {
-  id: string;
   sessionDate: Date;
-  batchIndex: number;
-  status: string;
+  words: Array<{
+    vocabularyItemId: string;
+  }>;
+};
+
+type DashboardLastCompletedSessionRecord = {
+  sessionDate: Date;
   words: Array<{
     vocabularyItemId: string;
   }>;
@@ -82,140 +87,24 @@ export class DashboardService {
 
   /** Summary: This method aggregates homepage data for the user's active book from persisted state. */
   async getHome(userId: string): Promise<DashboardHomeResponse> {
-    const user = await this.prismaService.user.findUnique({
-      where: {
-        id: userId
+    return this.prismaService.$transaction(async (transactionClient) => {
+      const user = await transactionClient.user.findUnique({
+        where: {
+          id: userId
+        }
+      });
+
+      if (!user) {
+        throw new NotFoundException('用户不存在。');
       }
+
+      if (!user.activeBookId) {
+        return this.buildEmptyHome();
+      }
+
+      const aggregateContext = await loadDashboardAggregateContext(transactionClient, userId, user.activeBookId);
+      return buildDashboardHomeResponse(aggregateContext);
     });
-
-    if (!user) {
-      throw new NotFoundException('用户不存在。');
-    }
-
-    if (!user.activeBookId) {
-      return this.buildEmptyHome();
-    }
-
-    const [book, plan, progress, sessions] = await Promise.all([
-      this.prismaService.vocabularyBook.findUnique({
-        where: {
-          id: user.activeBookId
-        },
-        include: {
-          _count: {
-            select: {
-              words: true
-            }
-          }
-        }
-      }),
-      this.prismaService.studyPlan.findUnique({
-        where: {
-          userId_bookId: {
-            userId,
-            bookId: user.activeBookId
-          }
-        }
-      }),
-      this.prismaService.userBookProgress.findUnique({
-        where: {
-          userId_bookId: {
-            userId,
-            bookId: user.activeBookId
-          }
-        }
-      }),
-      this.prismaService.dailySession.findMany({
-        where: {
-          userId,
-          bookId: user.activeBookId
-        },
-        include: {
-          words: {
-            select: {
-              vocabularyItemId: true
-            }
-          }
-        },
-        orderBy: [
-          {
-            sessionDate: 'desc'
-          },
-          {
-            batchIndex: 'desc'
-          }
-        ]
-      })
-    ]);
-
-    const learnedWordIds = new Set(normalizeStringArray(progress?.learnedWordIds));
-    const reviewedWordIds = new Set(normalizeStringArray(progress?.reviewedWordIds));
-    const familiarWordIds = new Set([...reviewedWordIds].filter((wordId) => learnedWordIds.has(wordId)));
-    const fuzzyWordIds = new Set([...learnedWordIds].filter((wordId) => !familiarWordIds.has(wordId)));
-    const totalWordCount = book?._count.words ?? 0;
-    const todayDate = createTodayRange().start.toISOString().slice(0, 10);
-    const todayTarget = buildTodayTarget(plan);
-    const completedSessions = sessions.filter((session) => session.status === 'COMPLETED');
-    const todayCompletedSessions = completedSessions.filter((session) => isDateWithinToday(session.sessionDate));
-    const todayLearnedWordIds = new Set(todayCompletedSessions.flatMap((session) => session.words.map((word) => word.vocabularyItemId)));
-    const todayState = todayCompletedSessions.length > 0 ? 'completed' : 'pending';
-    const completedDays = buildCompletedDayStats(completedSessions);
-    const lastCompletedSession = [...completedSessions].sort(compareSessionsByRecency)[0] ?? null;
-    const currentStreakDays = calculateCurrentStreakDays(completedDays);
-    const remainingNewWordCount = Math.max(0, totalWordCount - learnedWordIds.size);
-    const remainingDays = plan ? calculateRemainingDays(remainingNewWordCount, todayTarget.newCount) : null;
-    const estimatedFinishDate = remainingDays === null ? null : offsetUtcDateString(remainingDays);
-
-    return {
-      activeBook: book ? {
-        id: book.id,
-        key: book.key,
-        title: book.title,
-        description: book.description,
-        totalWordCount,
-        learnedCount: learnedWordIds.size,
-        reviewedCount: familiarWordIds.size
-      } : null,
-      plan: plan ? {
-        id: plan.id,
-        userId: plan.userId,
-        bookId: plan.bookId,
-        dailyWordCount: plan.dailyWordCount,
-        newWordRatio: plan.newWordRatio,
-        reviewWordRatio: plan.reviewWordRatio,
-        articleStyle: plan.articleStyle
-      } : null,
-      today: {
-        date: todayDate,
-        state: todayState,
-        target: todayTarget,
-        learnedUniqueWordCount: todayLearnedWordIds.size,
-        completedBatchCount: todayCompletedSessions.length
-      },
-      cta: {
-        mode: todayCompletedSessions.length > 0 ? 'continue' : 'start',
-        label: todayCompletedSessions.length > 0 ? '再学一轮' : '开始今日学习'
-      },
-      mastery: {
-        familiarCount: familiarWordIds.size,
-        fuzzyCount: fuzzyWordIds.size,
-        unseenCount: Math.max(0, totalWordCount - learnedWordIds.size),
-        totalWordCount
-      },
-      streaks: {
-        calendar: buildCalendar(completedDays, plan?.dailyWordCount ?? null),
-        totalDays: completedDays.size,
-        currentStreakDays,
-        remainingDays,
-        estimatedFinishDate
-      },
-      encouragement: buildEncouragement(todayCompletedSessions.length),
-      history: {
-        lastCompletedDate: lastCompletedSession ? lastCompletedSession.sessionDate.toISOString().slice(0, 10) : null,
-        lastCompletedBatchWordCount: lastCompletedSession?.words.length ?? 0,
-        activeBookTitle: book?.title ?? null
-      }
-    };
   }
 
   private buildEmptyHome(): DashboardHomeResponse {
@@ -279,6 +168,209 @@ function buildTodayTarget(plan: {
     newCount,
     reviewCount: Math.max(0, plan.dailyWordCount - newCount),
     totalCount: plan.dailyWordCount
+  };
+}
+
+async function loadDashboardAggregateContext(
+  transactionClient: Prisma.TransactionClient,
+  userId: string,
+  activeBookId: string
+) {
+  const { start, end } = createTodayRange();
+
+  const [book, plan, progress, todayCompletedSessions, completedDaySessions, lastCompletedSession] = await Promise.all([
+    transactionClient.vocabularyBook.findUnique({
+      where: {
+        id: activeBookId
+      },
+      include: {
+        _count: {
+          select: {
+            words: true
+          }
+        }
+      }
+    }),
+    transactionClient.studyPlan.findUnique({
+      where: {
+        userId_bookId: {
+          userId,
+          bookId: activeBookId
+        }
+      }
+    }),
+    transactionClient.userBookProgress.findUnique({
+      where: {
+        userId_bookId: {
+          userId,
+          bookId: activeBookId
+        }
+      }
+    }),
+    transactionClient.dailySession.findMany({
+      where: {
+        userId,
+        bookId: activeBookId,
+        status: 'COMPLETED',
+        sessionDate: {
+          gte: start,
+          lt: end
+        }
+      },
+      include: {
+        words: {
+          select: {
+            vocabularyItemId: true
+          }
+        }
+      },
+      orderBy: [
+        {
+          batchIndex: 'asc'
+        }
+      ]
+    }),
+    transactionClient.dailySession.findMany({
+      where: {
+        userId,
+        bookId: activeBookId,
+        status: 'COMPLETED'
+      },
+      select: {
+        sessionDate: true,
+        words: {
+          select: {
+            vocabularyItemId: true
+          }
+        }
+      }
+    }),
+    transactionClient.dailySession.findFirst({
+      where: {
+        userId,
+        bookId: activeBookId,
+        status: 'COMPLETED'
+      },
+      select: {
+        sessionDate: true,
+        words: {
+          select: {
+            vocabularyItemId: true
+          }
+        }
+      },
+      orderBy: [
+        {
+          sessionDate: 'desc'
+        },
+        {
+          batchIndex: 'desc'
+        }
+      ]
+    })
+  ]);
+
+  return {
+    book,
+    plan,
+    progress,
+    todayCompletedSessions: todayCompletedSessions as DashboardSessionRecord[],
+    completedDaySessions: completedDaySessions as DashboardSessionRecord[],
+    lastCompletedSession: lastCompletedSession as DashboardLastCompletedSessionRecord | null
+  };
+}
+
+function buildDashboardHomeResponse(context: {
+  book: {
+    id: string;
+    key: string;
+    title: string;
+    description: string;
+    _count: {
+      words: number;
+    };
+  } | null;
+  plan: {
+    id: string;
+    userId: string;
+    bookId: string;
+    dailyWordCount: number;
+    newWordRatio: number;
+    reviewWordRatio: number;
+    articleStyle: 'EXAM' | 'NEWS' | 'TED';
+  } | null;
+  progress: {
+    learnedWordIds: unknown;
+    reviewedWordIds: unknown;
+  } | null;
+  todayCompletedSessions: DashboardSessionRecord[];
+  completedDaySessions: DashboardSessionRecord[];
+  lastCompletedSession: DashboardLastCompletedSessionRecord | null;
+}): DashboardHomeResponse {
+  const learnedWordIds = new Set(normalizeStringArray(context.progress?.learnedWordIds));
+  const reviewedWordIds = new Set(normalizeStringArray(context.progress?.reviewedWordIds));
+  const familiarWordIds = new Set([...reviewedWordIds].filter((wordId) => learnedWordIds.has(wordId)));
+  const fuzzyWordIds = new Set([...learnedWordIds].filter((wordId) => !familiarWordIds.has(wordId)));
+  const totalWordCount = context.book?._count.words ?? 0;
+  const todayDate = createTodayRange().start.toISOString().slice(0, 10);
+  const todayTarget = buildTodayTarget(context.plan);
+  const todayLearnedWordIds = new Set(context.todayCompletedSessions.flatMap((session) => session.words.map((word) => word.vocabularyItemId)));
+  const todayState = context.todayCompletedSessions.length > 0 ? 'completed' : 'pending';
+  const completedDays = buildCompletedDayStats(context.completedDaySessions);
+  const currentStreakDays = calculateCurrentStreakDays(completedDays);
+  const remainingNewWordCount = Math.max(0, totalWordCount - learnedWordIds.size);
+  const remainingDays = context.plan ? calculateRemainingDays(remainingNewWordCount, todayTarget.newCount) : null;
+  const estimatedFinishDate = remainingDays === null ? null : offsetUtcDateString(remainingDays);
+
+  return {
+    activeBook: context.book ? {
+      id: context.book.id,
+      key: context.book.key,
+      title: context.book.title,
+      description: context.book.description,
+      totalWordCount,
+      learnedCount: learnedWordIds.size,
+      reviewedCount: familiarWordIds.size
+    } : null,
+    plan: context.plan ? {
+      id: context.plan.id,
+      userId: context.plan.userId,
+      bookId: context.plan.bookId,
+      dailyWordCount: context.plan.dailyWordCount,
+      newWordRatio: context.plan.newWordRatio,
+      reviewWordRatio: context.plan.reviewWordRatio,
+      articleStyle: context.plan.articleStyle
+    } : null,
+    today: {
+      date: todayDate,
+      state: todayState,
+      target: todayTarget,
+      learnedUniqueWordCount: todayLearnedWordIds.size,
+      completedBatchCount: context.todayCompletedSessions.length
+    },
+    cta: {
+      mode: context.todayCompletedSessions.length > 0 ? 'continue' : 'start',
+      label: context.todayCompletedSessions.length > 0 ? '再学一轮' : '开始今日学习'
+    },
+    mastery: {
+      familiarCount: familiarWordIds.size,
+      fuzzyCount: fuzzyWordIds.size,
+      unseenCount: Math.max(0, totalWordCount - learnedWordIds.size),
+      totalWordCount
+    },
+    streaks: {
+      calendar: buildCalendar(completedDays, context.plan?.dailyWordCount ?? null),
+      totalDays: completedDays.size,
+      currentStreakDays,
+      remainingDays,
+      estimatedFinishDate
+    },
+    encouragement: buildEncouragement(context.todayCompletedSessions.length),
+    history: {
+      lastCompletedDate: context.lastCompletedSession ? context.lastCompletedSession.sessionDate.toISOString().slice(0, 10) : null,
+      lastCompletedBatchWordCount: context.lastCompletedSession?.words.length ?? 0,
+      activeBookTitle: context.book?.title ?? null
+    }
   };
 }
 
@@ -378,11 +470,6 @@ function buildEncouragement(completedBatchCount: number) {
   };
 }
 
-function isDateWithinToday(value: Date) {
-  const { start, end } = createTodayRange();
-  return value >= start && value < end;
-}
-
 function calculateRemainingDays(remainingWordCount: number, dailyNewWordCount: number) {
   if (remainingWordCount <= 0) {
     return 0;
@@ -400,12 +487,4 @@ function offsetUtcDateString(dayOffset: number) {
   const shifted = new Date(start);
   shifted.setUTCDate(shifted.getUTCDate() + dayOffset);
   return shifted.toISOString().slice(0, 10);
-}
-
-function compareSessionsByRecency(left: DashboardSessionRecord, right: DashboardSessionRecord) {
-  const sessionTimeDelta = right.sessionDate.getTime() - left.sessionDate.getTime();
-  if (sessionTimeDelta !== 0) {
-    return sessionTimeDelta;
-  }
-  return right.batchIndex - left.batchIndex;
 }
