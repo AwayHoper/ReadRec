@@ -5,6 +5,28 @@ import { DailySessionService } from '../src/modules/daily-session/daily-session.
 type SessionStatus = 'PENDING' | 'ROUND_ONE' | 'ROUND_TWO' | 'ROUND_THREE' | 'COMPLETED';
 
 describe('DailySessionService multi-batch behavior', function runDailySessionServiceSuite() {
+  it('returns the latest completed batch without creating another one for read-only today access', async function verifyReadOnlyTodayLookup() {
+    const prismaService = createPrismaStubWithBatches([
+      createSessionRecord({
+        id: 'session-1',
+        batchIndex: 1,
+        status: 'COMPLETED'
+      }),
+      createSessionRecord({
+        id: 'session-2',
+        batchIndex: 2,
+        status: 'COMPLETED'
+      })
+    ]);
+    const service = createService(prismaService);
+
+    const session = await service.getTodaySession('user-1');
+
+    expect(session.id).toBe('session-2');
+    expect(session.batchIndex).toBe(2);
+    expect(prismaService.dailySession.create).not.toHaveBeenCalled();
+  });
+
   it('creates batch 2 after batch 1 is completed on the same day', async function verifyCreateSecondBatch() {
     const prismaService = createPrismaStubWithBatches([
       createSessionRecord({
@@ -22,7 +44,33 @@ describe('DailySessionService multi-batch behavior', function runDailySessionSer
     ).createNextSession('user-1');
 
     expect(session.batchIndex).toBe(2);
+    expect(prismaService.dailySession.create.mock.calls[0]?.[0]?.data?.batchIndex).toBe(2);
     expect(prismaService.dailySession.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates the next highest batch index when multiple same-day batches are already completed', async function verifyCreateThirdBatch() {
+    const prismaService = createPrismaStubWithBatches([
+      createSessionRecord({
+        id: 'session-1',
+        batchIndex: 1,
+        status: 'COMPLETED'
+      }),
+      createSessionRecord({
+        id: 'session-2',
+        batchIndex: 2,
+        status: 'COMPLETED'
+      })
+    ]);
+    const service = createService(prismaService);
+
+    const session = await (
+      service as DailySessionService & {
+        createNextSession(userId: string): Promise<{ batchIndex: number }>;
+      }
+    ).createNextSession('user-1');
+
+    expect(session.batchIndex).toBe(3);
+    expect(prismaService.dailySession.create.mock.calls[0]?.[0]?.data?.batchIndex).toBe(3);
   });
 
   it('returns the latest unfinished batch as the active learning session', async function verifyLatestActiveBatchLookup() {
@@ -143,7 +191,10 @@ function findManySessions(sessions: ReturnType<typeof createSessionRecord>[], ar
   });
 
   if (Array.isArray(args?.orderBy)) {
-    return filteredSessions.sort((left, right) => right.batchIndex - left.batchIndex);
+    return [...filteredSessions].sort((left, right) => {
+      const batchDirection = args.orderBy[0]?.batchIndex;
+      return batchDirection === 'asc' ? left.batchIndex - right.batchIndex : right.batchIndex - left.batchIndex;
+    });
   }
 
   return filteredSessions;

@@ -36,7 +36,17 @@ export class DailySessionService {
 
   /** Summary: This method gets or lazily creates the current day's learning session for the user. */
   async getTodaySession(userId: string) {
-    return this.getCurrentLearningSession(userId);
+    const existingSession = await this.findLatestActiveSession(userId);
+    if (existingSession) {
+      return mapDailySession(existingSession);
+    }
+
+    const latestTodaySession = await this.findLatestTodaySession(userId);
+    if (latestTodaySession) {
+      return mapDailySession(latestTodaySession);
+    }
+
+    return this.createSessionBatch(userId, 1);
   }
 
   /** Summary: This method gets the latest unfinished learning batch or creates the next available batch for today. */
@@ -234,6 +244,22 @@ export class DailySessionService {
         }
       },
       orderBy: [{ batchIndex: 'asc' }],
+      include: DAILY_SESSION_INCLUDE
+    });
+  }
+
+  /** Summary: This method loads the latest batch for today regardless of completion state so read-only callers can inspect the current day. */
+  private findLatestTodaySession(userId: string) {
+    const { start, end } = createTodayRange();
+    return this.prismaService.dailySession.findFirst({
+      where: {
+        userId,
+        sessionDate: {
+          gte: start,
+          lt: end
+        }
+      },
+      orderBy: [{ batchIndex: 'desc' }],
       include: DAILY_SESSION_INCLUDE
     });
   }
