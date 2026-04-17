@@ -201,7 +201,10 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
     await service.getHome('user-1');
 
     expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
-    expect(prismaService.dailySession.findMany).toHaveBeenCalledTimes(2);
+    expect(prismaService.$transaction.mock.calls[0]?.[1]).toMatchObject({
+      isolationLevel: 'RepeatableRead'
+    });
+    expect(prismaService.dailySession.findMany).toHaveBeenCalledTimes(3);
     expect(prismaService.dailySession.findFirst).toHaveBeenCalledTimes(1);
 
     const todayCompletedQuery = prismaService.dailySession.findMany.mock.calls.find((call) => call[0]?.where?.sessionDate?.gte);
@@ -213,8 +216,10 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
       }
     });
 
-    const completedHistoryQuery = prismaService.dailySession.findMany.mock.calls.find((call) => !call[0]?.where?.sessionDate);
-    expect(completedHistoryQuery?.[0]).toMatchObject({
+    const recentCalendarQuery = prismaService.dailySession.findMany.mock.calls.find((call) =>
+      call[0]?.where?.sessionDate?.gte && call[0]?.where?.sessionDate?.lt && !call[0]?.include && call[0]?.select?.words
+    );
+    expect(recentCalendarQuery?.[0]).toMatchObject({
       where: {
         userId: 'user-1',
         bookId: 'book-1',
@@ -229,6 +234,20 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
         }
       }
     });
+
+    const distinctDaysQuery = prismaService.dailySession.findMany.mock.calls.find((call) => call[0]?.distinct?.includes('sessionDate'));
+    expect(distinctDaysQuery?.[0]).toMatchObject({
+      where: {
+        userId: 'user-1',
+        bookId: 'book-1',
+        status: 'COMPLETED'
+      },
+      distinct: ['sessionDate'],
+      select: {
+        sessionDate: true
+      }
+    });
+    expect(distinctDaysQuery?.[0]?.select?.words).toBeUndefined();
 
     expect(prismaService.dailySession.findFirst.mock.calls[0]?.[0]).toMatchObject({
       where: {
@@ -453,7 +472,13 @@ function findManySessions(sessions: SessionRecord[], args?: Record<string, any>)
     return 0;
   }) : selectedSessions;
 
-  return orderedSessions.map((session) => selectSessionShape(session, args));
+  const distinctSessions = Array.isArray(args?.distinct) && args.distinct.includes('sessionDate')
+    ? orderedSessions.filter((session, index, items) =>
+      items.findIndex((candidate) => candidate.sessionDate.getTime() === session.sessionDate.getTime()) === index
+    )
+    : orderedSessions;
+
+  return distinctSessions.map((session) => selectSessionShape(session, args));
 }
 
 function selectSessionShape(session: SessionRecord, args?: Record<string, any>) {
