@@ -1,4 +1,4 @@
-import { AuthResponse, DailySession, DashboardHomeResponse, ReadingQuestion, ReviewRound, StudyPlan, VocabularyBookSummary, WrongBookEntry } from '../types';
+import { AuthResponse, DailySession, DashboardHomeResponse, ReadingQuestion, ReviewRoundResponse, StudyPlan, VocabularyBookSummary, WrongBookEntry } from '../types';
 
 const books: VocabularyBookSummary[] = [
   { id: 'book-kaoyan', key: 'kaoyan-2', title: '考研英语二词库', description: '面向考研英语二语境的官方词库。', learnedCount: 0, reviewedCount: 0, totalWordCount: 4 },
@@ -142,9 +142,9 @@ export async function createNextSession(): Promise<DailySession> {
   return session;
 }
 /** Summary: This function simulates selecting unknown words during round one. */
-export async function submitSelections(sessionWordIds: string[]) { session.words = session.words.map((word) => ({ ...word, isSelectedUnknown: sessionWordIds.includes(word.id), status: sessionWordIds.includes(word.id) ? 'NEEDS_REVIEW' : 'PASSED_ROUND_ONE' })); session.status = 'ROUND_TWO'; return session; }
+export async function submitSelections(_articleId: string, sessionWordIds: string[]) { session.words = session.words.map((word) => ({ ...word, isSelectedUnknown: sessionWordIds.includes(word.id), status: sessionWordIds.includes(word.id) ? 'NEEDS_REVIEW' : 'PASSED_ROUND_ONE' })); session.status = 'ROUND_TWO'; return session; }
 /** Summary: This function returns the current review-round state. */
-export async function getReviewRounds(): Promise<{ rounds: ReviewRound[] }> { return { rounds: session.reviewRounds }; }
+export async function getReviewRounds(): Promise<ReviewRoundResponse> { return { sessionId: session.id, status: session.status, rounds: session.reviewRounds }; }
 /** Summary: This function simulates one review answer and progresses the flow when all answers pass. */
 export async function checkReviewAnswer(sessionWordId: string, selectedOption: string) { session.reviewRounds = session.reviewRounds.map((round) => round.sessionWordId === sessionWordId ? { ...round, currentPhase: selectedOption === round.correctAnswer ? 'PASSED' : 'NOTES', isPassed: selectedOption === round.correctAnswer } : round); if (session.reviewRounds.every((round) => round.isPassed)) { session.status = 'ROUND_THREE'; } return session; }
 /** Summary: This function returns the current reading questions. */
