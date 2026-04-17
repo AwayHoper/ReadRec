@@ -162,7 +162,8 @@ export class DashboardService {
     const completedDays = buildCompletedDayStats(completedSessions);
     const lastCompletedSession = [...completedSessions].sort(compareSessionsByRecency)[0] ?? null;
     const currentStreakDays = calculateCurrentStreakDays(completedDays);
-    const remainingDays = plan ? calculateRemainingDays(totalWordCount - learnedWordIds.size, plan.dailyWordCount) : null;
+    const remainingNewWordCount = Math.max(0, totalWordCount - learnedWordIds.size);
+    const remainingDays = plan ? calculateRemainingDays(remainingNewWordCount, todayTarget.newCount) : null;
     const estimatedFinishDate = remainingDays === null ? null : offsetUtcDateString(remainingDays);
 
     return {
@@ -304,15 +305,13 @@ function buildCompletedDayStats(sessions: DashboardSessionRecord[]) {
 }
 
 function calculateCurrentStreakDays(dayStats: Map<string, { completedBatchCount: number; learnedWordIds: Set<string> }>) {
-  const sortedDates = [...dayStats.keys()].sort();
-  const anchorDate = sortedDates.at(-1);
+  const { start } = createTodayRange();
+  let cursor = new Date(start);
+  let streakDays = 0;
 
-  if (!anchorDate) {
+  if (!dayStats.has(cursor.toISOString().slice(0, 10))) {
     return 0;
   }
-
-  let streakDays = 0;
-  let cursor = new Date(`${anchorDate}T00:00:00.000Z`);
 
   while (dayStats.has(cursor.toISOString().slice(0, 10))) {
     streakDays += 1;
@@ -384,13 +383,16 @@ function isDateWithinToday(value: Date) {
   return value >= start && value < end;
 }
 
-function calculateRemainingDays(remainingWordCount: number, dailyWordCount: number) {
+function calculateRemainingDays(remainingWordCount: number, dailyNewWordCount: number) {
   if (remainingWordCount <= 0) {
     return 0;
   }
 
-  const safeDailyWordCount = Math.max(1, dailyWordCount);
-  return Math.ceil(remainingWordCount / safeDailyWordCount);
+  if (dailyNewWordCount <= 0) {
+    return null;
+  }
+
+  return Math.ceil(remainingWordCount / dailyNewWordCount);
 }
 
 function offsetUtcDateString(dayOffset: number) {

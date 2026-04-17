@@ -90,9 +90,9 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
         id: 'plan-1',
         userId: 'user-1',
         bookId: 'book-1',
-        dailyWordCount: 2,
+        dailyWordCount: 6,
         newWordRatio: 1,
-        reviewWordRatio: 1,
+        reviewWordRatio: 2,
         articleStyle: 'NEWS'
       },
       sessions: [
@@ -134,6 +134,40 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
     expect(result.streaks.remainingDays).toBe(3);
     expect(result.streaks.estimatedFinishDate).toBe(offsetUtcDateString(3));
     expect(result.streaks.calendar.some((item) => item.date === offsetUtcDateString(-3) && item.completed)).toBe(false);
+  });
+
+  it('returns a zero current streak when today has no completed learning even if recent prior days were completed', async function verifyCurrentStreakRequiresTodayCompletion() {
+    const service = new DashboardService(createDashboardPrismaStub({
+      sessions: [
+        createSessionRecord({
+          id: 'session-pending-today',
+          batchIndex: 1,
+          status: 'ROUND_ONE',
+          vocabularyItemIds: ['w1', 'w2'],
+          sessionDate: offsetUtcDay(0)
+        }),
+        createSessionRecord({
+          id: 'session-yesterday',
+          batchIndex: 1,
+          status: 'COMPLETED',
+          vocabularyItemIds: ['w3'],
+          sessionDate: offsetUtcDay(-1)
+        }),
+        createSessionRecord({
+          id: 'session-two-days-ago',
+          batchIndex: 1,
+          status: 'COMPLETED',
+          vocabularyItemIds: ['w4'],
+          sessionDate: offsetUtcDay(-2)
+        })
+      ]
+    }));
+
+    const result = await service.getHome('user-1');
+
+    expect(result.today.state).toBe('pending');
+    expect(result.streaks.totalDays).toBe(2);
+    expect(result.streaks.currentStreakDays).toBe(0);
   });
 
   it('throws when the user does not exist', async function verifyMissingUser() {
