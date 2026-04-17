@@ -17,6 +17,12 @@ type DashboardLastCompletedSessionRecord = {
   }>;
 };
 
+type DashboardTodayAnchor = {
+  start: Date;
+  end: Date;
+  todayDate: string;
+};
+
 type DashboardHomeResponse = {
   activeBook: {
     id: string;
@@ -87,6 +93,8 @@ export class DashboardService {
 
   /** Summary: This method aggregates homepage data for the user's active book from persisted state. */
   async getHome(userId: string): Promise<DashboardHomeResponse> {
+    const todayAnchor = createTodayAnchor();
+
     return this.prismaService.$transaction(async (transactionClient) => {
       const user = await transactionClient.user.findUnique({
         where: {
@@ -99,22 +107,22 @@ export class DashboardService {
       }
 
       if (!user.activeBookId) {
-        return this.buildEmptyHome();
+        return this.buildEmptyHome(todayAnchor);
       }
 
-      const aggregateContext = await loadDashboardAggregateContext(transactionClient, userId, user.activeBookId);
-      return buildDashboardHomeResponse(aggregateContext);
+      const aggregateContext = await loadDashboardAggregateContext(transactionClient, userId, user.activeBookId, todayAnchor);
+      return buildDashboardHomeResponse(aggregateContext, todayAnchor);
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead
     });
   }
 
-  private buildEmptyHome(): DashboardHomeResponse {
+  private buildEmptyHome(todayAnchor: DashboardTodayAnchor): DashboardHomeResponse {
     return {
       activeBook: null,
       plan: null,
       today: {
-        date: createTodayRange().start.toISOString().slice(0, 10),
+        date: todayAnchor.todayDate,
         state: 'pending',
         target: {
           newCount: 0,
@@ -135,7 +143,7 @@ export class DashboardService {
         totalWordCount: 0
       },
       streaks: {
-        calendar: buildCalendar(new Map(), null),
+        calendar: buildCalendar(new Map(), null, todayAnchor),
         totalDays: 0,
         currentStreakDays: 0,
         remainingDays: null,
@@ -176,10 +184,10 @@ function buildTodayTarget(plan: {
 async function loadDashboardAggregateContext(
   transactionClient: Prisma.TransactionClient,
   userId: string,
-  activeBookId: string
+  activeBookId: string,
+  todayAnchor: DashboardTodayAnchor
 ) {
-  const { start, end } = createTodayRange();
-  const recentCalendarStart = offsetUtcDateStart(-13);
+  const recentCalendarStart = offsetUtcDateStart(todayAnchor, -13);
 
   const [book, plan, progress, todayCompletedSessions, completedDayDates, recentCalendarSessions, lastCompletedSession] = await Promise.all([
     transactionClient.vocabularyBook.findUnique({
@@ -216,8 +224,8 @@ async function loadDashboardAggregateContext(
         bookId: activeBookId,
         status: 'COMPLETED',
         sessionDate: {
-          gte: start,
-          lt: end
+          gte: todayAnchor.start,
+          lt: todayAnchor.end
         }
       },
       include: {
@@ -251,7 +259,7 @@ async function loadDashboardAggregateContext(
         status: 'COMPLETED',
         sessionDate: {
           gte: recentCalendarStart,
-          lt: end
+          lt: todayAnchor.end
         }
       },
       select: {
@@ -328,22 +336,21 @@ function buildDashboardHomeResponse(context: {
     sessionDate: Date;
   }>;
   lastCompletedSession: DashboardLastCompletedSessionRecord | null;
-}): DashboardHomeResponse {
+}, todayAnchor: DashboardTodayAnchor): DashboardHomeResponse {
   const learnedWordIds = new Set(normalizeStringArray(context.progress?.learnedWordIds));
   const reviewedWordIds = new Set(normalizeStringArray(context.progress?.reviewedWordIds));
   const familiarWordIds = new Set([...reviewedWordIds].filter((wordId) => learnedWordIds.has(wordId)));
   const fuzzyWordIds = new Set([...learnedWordIds].filter((wordId) => !familiarWordIds.has(wordId)));
   const totalWordCount = context.book?._count.words ?? 0;
-  const todayDate = createTodayRange().start.toISOString().slice(0, 10);
   const todayTarget = buildTodayTarget(context.plan);
   const todayLearnedWordIds = new Set(context.todayCompletedSessions.flatMap((session) => session.words.map((word) => word.vocabularyItemId)));
   const todayState = context.todayCompletedSessions.length > 0 ? 'completed' : 'pending';
   const recentCompletedDays = buildCompletedDayStats(context.recentCalendarSessions);
   const completedDayKeys = new Set(context.completedDayDates.map((item) => item.sessionDate.toISOString().slice(0, 10)));
-  const currentStreakDays = calculateCurrentStreakDays(completedDayKeys);
+  const currentStreakDays = calculateCurrentStreakDays(completedDayKeys, todayAnchor);
   const remainingNewWordCount = Math.max(0, totalWordCount - learnedWordIds.size);
   const remainingDays = context.plan ? calculateRemainingDays(remainingNewWordCount, todayTarget.newCount) : null;
-  const estimatedFinishDate = remainingDays === null ? null : offsetUtcDateString(remainingDays);
+  const estimatedFinishDate = remainingDays === null ? null : offsetUtcDateString(todayAnchor, remainingDays);
 
   return {
     activeBook: context.book ? {
@@ -365,7 +372,7 @@ function buildDashboardHomeResponse(context: {
       articleStyle: context.plan.articleStyle
     } : null,
     today: {
-      date: todayDate,
+      date: todayAnchor.todayDate,
       state: todayState,
       target: todayTarget,
       learnedUniqueWordCount: todayLearnedWordIds.size,
@@ -382,7 +389,7 @@ function buildDashboardHomeResponse(context: {
       totalWordCount
     },
     streaks: {
-      calendar: buildCalendar(recentCompletedDays, context.plan?.dailyWordCount ?? null),
+      calendar: buildCalendar(recentCompletedDays, context.plan?.dailyWordCount ?? null, todayAnchor),
       totalDays: completedDayKeys.size,
       currentStreakDays,
       remainingDays,
@@ -419,9 +426,8 @@ function buildCompletedDayStats(sessions: DashboardSessionRecord[]) {
   return dayStats;
 }
 
-function calculateCurrentStreakDays(completedDayKeys: Set<string>) {
-  const { start } = createTodayRange();
-  let cursor = new Date(start);
+function calculateCurrentStreakDays(completedDayKeys: Set<string>, todayAnchor: DashboardTodayAnchor) {
+  let cursor = new Date(todayAnchor.start);
   let streakDays = 0;
 
   if (!completedDayKeys.has(cursor.toISOString().slice(0, 10))) {
@@ -438,11 +444,12 @@ function calculateCurrentStreakDays(completedDayKeys: Set<string>) {
 
 function buildCalendar(
   dayStats: Map<string, { completedBatchCount: number; learnedWordIds: Set<string> }>,
-  dailyWordCount: number | null
+  dailyWordCount: number | null,
+  todayAnchor: DashboardTodayAnchor
 ) {
   return Array.from({ length: 14 }, (_, index) => {
     const dayOffset = index - 13;
-    const date = offsetUtcDateString(dayOffset);
+    const date = offsetUtcDateString(todayAnchor, dayOffset);
     const stats = dayStats.get(date);
     const learnedUniqueWordCount = stats?.learnedWordIds.size ?? 0;
 
@@ -505,13 +512,21 @@ function calculateRemainingDays(remainingWordCount: number, dailyNewWordCount: n
   return Math.ceil(remainingWordCount / dailyNewWordCount);
 }
 
-function offsetUtcDateString(dayOffset: number) {
-  return offsetUtcDateStart(dayOffset).toISOString().slice(0, 10);
+function offsetUtcDateString(todayAnchor: DashboardTodayAnchor, dayOffset: number) {
+  return offsetUtcDateStart(todayAnchor, dayOffset).toISOString().slice(0, 10);
 }
 
-function offsetUtcDateStart(dayOffset: number) {
-  const { start } = createTodayRange();
-  const shifted = new Date(start);
+function offsetUtcDateStart(todayAnchor: DashboardTodayAnchor, dayOffset: number) {
+  const shifted = new Date(todayAnchor.start);
   shifted.setUTCDate(shifted.getUTCDate() + dayOffset);
   return shifted;
+}
+
+function createTodayAnchor(): DashboardTodayAnchor {
+  const { start, end } = createTodayRange();
+  return {
+    start,
+    end,
+    todayDate: start.toISOString().slice(0, 10)
+  };
 }

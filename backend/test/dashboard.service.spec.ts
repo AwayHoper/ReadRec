@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
-import { createTodayRange } from '../src/common/prisma/prisma-mappers.js';
+import * as prismaMappers from '../src/common/prisma/prisma-mappers.js';
 import { DashboardService } from '../src/modules/dashboard/dashboard.service.js';
 
 describe('DashboardService.getHome', function runDashboardServiceSuite() {
@@ -258,6 +258,34 @@ describe('DashboardService.getHome', function runDashboardServiceSuite() {
     });
   });
 
+  it('captures the UTC today range once per request and reuses that anchor across the aggregate', async function verifySingleTodayAnchor() {
+    const createTodayRangeSpy = vi.spyOn(prismaMappers, 'createTodayRange').mockReturnValue({
+      start: new Date('2026-04-18T00:00:00.000Z'),
+      end: new Date('2026-04-19T00:00:00.000Z')
+    });
+    const prismaService = createDashboardPrismaStub({
+      sessions: [
+        createSessionRecord({
+          id: 'session-today-completed',
+          batchIndex: 1,
+          status: 'COMPLETED',
+          vocabularyItemIds: ['w1'],
+          sessionDate: new Date('2026-04-18T00:00:00.000Z')
+        })
+      ]
+    });
+    const service = new DashboardService(prismaService);
+
+    const result = await service.getHome('user-1');
+
+    expect(createTodayRangeSpy).toHaveBeenCalledTimes(1);
+    expect(result.today.date).toBe('2026-04-18');
+    expect(result.streaks.calendar.at(-1)?.date).toBe('2026-04-18');
+    expect(result.streaks.estimatedFinishDate).toBe('2026-04-21');
+
+    createTodayRangeSpy.mockRestore();
+  });
+
   it('throws when the user does not exist', async function verifyMissingUser() {
     const service = new DashboardService(createDashboardPrismaStub({
       user: null
@@ -413,7 +441,7 @@ function createSessionRecord(input: {
 }
 
 function offsetUtcDay(dayOffset: number) {
-  const { start } = createTodayRange();
+  const { start } = prismaMappers.createTodayRange();
   const shifted = new Date(start);
   shifted.setUTCDate(shifted.getUTCDate() + dayOffset);
   return shifted;
