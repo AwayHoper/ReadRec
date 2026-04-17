@@ -118,6 +118,7 @@ model DailySession {
   bookId           String
   studyPlanId      String
   sessionDate      DateTime
+  batchIndex       Int
   status           DailySessionStatus
   articleStyle     ArticleStyle
   createdAt        DateTime           @default(now())
@@ -129,7 +130,8 @@ model DailySession {
   articles         GeneratedArticle[]
   readingQuestions ReadingQuestion[]
 
-  @@unique([userId, sessionDate])
+  @@unique([userId, sessionDate, batchIndex])
+  @@index([userId, sessionDate])
 }
 
 model DailySessionWord {

@@ -6,6 +6,25 @@ import { createId } from '../../common/utils/id.util.js';
 import { AiContentService } from '../ai-content/ai-content.service.js';
 import { evaluateReviewAnswer } from './domain/review-progress.js';
 
+const LEARNING_SESSION_INCLUDE = {
+  words: {
+    include: {
+      vocabularyItem: true,
+      reviewRound: true
+    }
+  },
+  articles: true,
+  readingQuestions: {
+    include: {
+      answer: true
+    }
+  }
+} as const;
+
+type LearningSessionRecord = Prisma.DailySessionGetPayload<{
+  include: typeof LEARNING_SESSION_INCLUDE;
+}>;
+
 @Injectable()
 export class LearningService {
   constructor(
@@ -51,7 +70,7 @@ export class LearningService {
       });
     }
 
-    const refreshedSession = await this.getTodaySessionForUser(userId);
+    const refreshedSession = await this.getSessionById(session.id);
     const reviewCandidates = refreshedSession.words.filter((word) => word.isSelectedUnknown);
     for (const word of reviewCandidates) {
       const vocabularyItem = mapVocabularyItem(word.vocabularyItem);
@@ -91,12 +110,12 @@ export class LearningService {
       await this.ensureReadingQuestions(refreshedSession.id);
     }
 
-    return this.loadTodaySessionResponse(userId);
+    return this.loadSessionResponse(refreshedSession.id);
   }
 
   /** Summary: This method returns the current review-round state for today's session. */
   async getReviewRound(userId: string) {
-    const session = await this.loadTodaySessionResponse(userId);
+    const session = await this.loadCurrentSessionResponse(userId);
     return {
       sessionId: session.id,
       status: session.status,
@@ -140,7 +159,7 @@ export class LearningService {
       })
     ]);
 
-    const refreshedSession = await this.getTodaySessionForUser(userId);
+    const refreshedSession = await this.getSessionById(session.id);
     const allPassed = refreshedSession.words
       .filter((word) => word.isSelectedUnknown)
       .every((word) => word.reviewRound?.isPassed);
@@ -157,12 +176,12 @@ export class LearningService {
       });
     }
 
-    return this.loadTodaySessionResponse(userId);
+    return this.loadSessionResponse(refreshedSession.id);
   }
 
   /** Summary: This method returns the generated round-three reading questions for today's session. */
   async getReadingQuestions(userId: string) {
-    const session = await this.loadTodaySessionResponse(userId);
+    const session = await this.loadCurrentSessionResponse(userId);
     return session.readingQuestions;
   }
 
@@ -270,7 +289,7 @@ export class LearningService {
       })
     ]);
 
-    const responseSession = await this.loadTodaySessionResponse(userId);
+    const responseSession = await this.loadSessionResponse(session.id);
     return {
       session: responseSession,
       words: responseSession.words.map((word) => ({
@@ -283,7 +302,7 @@ export class LearningService {
     };
   }
 
-  /** Summary: This method returns the current daily session aggregate for the given user. */
+  /** Summary: This method returns the current unfinished learning batch for the given user. */
   private async getTodaySessionForUser(userId: string) {
     const { start, end } = createTodayRange();
     const session = await this.prismaService.dailySession.findFirst({
@@ -292,32 +311,42 @@ export class LearningService {
         sessionDate: {
           gte: start,
           lt: end
+        },
+        status: {
+          not: 'COMPLETED'
         }
       },
-      include: {
-        words: {
-          include: {
-            vocabularyItem: true,
-            reviewRound: true
-          }
-        },
-        articles: true,
-        readingQuestions: {
-          include: {
-            answer: true
-          }
-        }
-      }
+      orderBy: [{ batchIndex: 'desc' }],
+      include: LEARNING_SESSION_INCLUDE
     });
     if (!session) {
-      throw new NotFoundException('今日学习尚未初始化。');
+      throw new NotFoundException('当前没有可继续的学习批次。');
     }
     return session;
   }
 
-  /** Summary: This method returns the frontend-facing daily-session response shape for the current user. */
-  private async loadTodaySessionResponse(userId: string) {
+  /** Summary: This method loads one persisted session aggregate by id. */
+  private async getSessionById(sessionId: string) {
+    const session = await this.prismaService.dailySession.findUnique({
+      where: {
+        id: sessionId
+      },
+      include: LEARNING_SESSION_INCLUDE
+    });
+    if (!session) {
+      throw new NotFoundException('学习批次不存在。');
+    }
+    return session;
+  }
+
+  /** Summary: This method returns the frontend-facing daily-session response shape for the current active user batch. */
+  private async loadCurrentSessionResponse(userId: string) {
     return mapLearningSession(await this.getTodaySessionForUser(userId));
+  }
+
+  /** Summary: This method returns the frontend-facing daily-session response shape for one persisted batch id. */
+  private async loadSessionResponse(sessionId: string) {
+    return mapLearningSession(await this.getSessionById(sessionId));
   }
 
   /** Summary: This method generates the round-three reading questions once the review round is finished. */
@@ -372,22 +401,7 @@ export class LearningService {
 }
 
 /** Summary: This helper converts one persisted learning-session aggregate into the frontend response shape. */
-function mapLearningSession(session: Prisma.DailySessionGetPayload<{
-  include: {
-    words: {
-      include: {
-        vocabularyItem: true;
-        reviewRound: true;
-      };
-    };
-    articles: true;
-    readingQuestions: {
-      include: {
-        answer: true;
-      };
-    };
-  };
-}>) {
+function mapLearningSession(session: LearningSessionRecord) {
   const words = session.words.map((item) => ({
     id: item.id,
     vocabularyItemId: item.vocabularyItemId,
@@ -409,6 +423,7 @@ function mapLearningSession(session: Prisma.DailySessionGetPayload<{
     bookId: session.bookId,
     studyPlanId: session.studyPlanId,
     sessionDate: session.sessionDate.toISOString().slice(0, 10),
+    batchIndex: session.batchIndex,
     status: session.status,
     articleStyle: session.articleStyle,
     words,

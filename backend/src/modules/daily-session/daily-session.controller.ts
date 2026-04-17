@@ -24,6 +24,12 @@ export class DailySessionController {
     return this.dailySessionService.startTodaySession(request.user.sub);
   }
 
+  /** Summary: This endpoint continues today's unfinished batch or creates the next same-day batch. */
+  @Post('today/next')
+  createNext(@Req() request: Request & { user: { sub: string } }) {
+    return this.dailySessionService.createNextSession(request.user.sub);
+  }
+
   /** Summary: This endpoint returns today's generated articles. */
   @Get('today/articles')
   getTodayArticles(@Req() request: Request & { user: { sub: string } }) {

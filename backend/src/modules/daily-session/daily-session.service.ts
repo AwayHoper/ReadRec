@@ -7,6 +7,25 @@ import { AiContentService } from '../ai-content/ai-content.service.js';
 import { DictionaryService } from '../dictionary/dictionary.service.js';
 import { selectDailyWords } from './domain/daily-session-selector.js';
 
+const DAILY_SESSION_INCLUDE = {
+  words: {
+    include: {
+      vocabularyItem: true,
+      reviewRound: true
+    }
+  },
+  articles: true,
+  readingQuestions: {
+    include: {
+      answer: true
+    }
+  }
+} as const;
+
+type DailySessionRecord = Prisma.DailySessionGetPayload<{
+  include: typeof DAILY_SESSION_INCLUDE;
+}>;
+
 @Injectable()
 export class DailySessionService {
   constructor(
@@ -17,11 +36,31 @@ export class DailySessionService {
 
   /** Summary: This method gets or lazily creates the current day's learning session for the user. */
   async getTodaySession(userId: string) {
-    const existingSession = await this.findTodaySession(userId);
+    return this.getCurrentLearningSession(userId);
+  }
+
+  /** Summary: This method gets the latest unfinished learning batch or creates the next available batch for today. */
+  async getCurrentLearningSession(userId: string) {
+    const existingSession = await this.findLatestActiveSession(userId);
     if (existingSession) {
       return mapDailySession(existingSession);
     }
-    return this.createTodaySession(userId);
+
+    const todaySessions = await this.findTodaySessions(userId);
+    const nextBatchIndex = todaySessions.length === 0 ? 1 : todaySessions.at(-1)!.batchIndex + 1;
+    return this.createSessionBatch(userId, nextBatchIndex);
+  }
+
+  /** Summary: This method continues today's unfinished batch or creates the next same-day batch when all prior ones are complete. */
+  async createNextSession(userId: string) {
+    const existingSession = await this.findLatestActiveSession(userId);
+    if (existingSession) {
+      return mapDailySession(existingSession);
+    }
+
+    const todaySessions = await this.findTodaySessions(userId);
+    const nextBatchIndex = todaySessions.length === 0 ? 1 : todaySessions.at(-1)!.batchIndex + 1;
+    return this.createSessionBatch(userId, nextBatchIndex);
   }
 
   /** Summary: This method transitions today's session into round one without regenerating the snapshot. */
@@ -44,8 +83,8 @@ export class DailySessionService {
     return session.articles;
   }
 
-  /** Summary: This method creates the current day's session snapshot and article content. */
-  private async createTodaySession(userId: string) {
+  /** Summary: This method creates one batch snapshot and article content for the current UTC day. */
+  private async createSessionBatch(userId: string, batchIndex: number) {
     const user = await this.prismaService.user.findUnique({
       where: {
         id: userId
@@ -144,6 +183,7 @@ export class DailySessionService {
           bookId: user.activeBookId,
           studyPlanId: plan.id,
           sessionDate: start,
+          batchIndex,
           status: 'PENDING',
           articleStyle: plan.articleStyle,
           words: {
@@ -175,17 +215,17 @@ export class DailySessionService {
       }
     }
 
-    const createdSession = await this.findTodaySession(userId);
+    const createdSession = await this.findTodaySessionByBatchIndex(userId, batchIndex);
     if (!createdSession) {
-      throw new NotFoundException('今日学习创建失败。');
+      throw new NotFoundException('今日学习批次创建失败。');
     }
     return mapDailySession(createdSession);
   }
 
-  /** Summary: This method loads the current day's session with all child snapshots needed by the learning flow. */
-  private findTodaySession(userId: string) {
+  /** Summary: This method loads all of today's batches ordered from earliest to latest. */
+  private findTodaySessions(userId: string) {
     const { start, end } = createTodayRange();
-    return this.prismaService.dailySession.findFirst({
+    return this.prismaService.dailySession.findMany({
       where: {
         userId,
         sessionDate: {
@@ -193,20 +233,43 @@ export class DailySessionService {
           lt: end
         }
       },
-      include: {
-        words: {
-          include: {
-            vocabularyItem: true,
-            reviewRound: true
-          }
+      orderBy: [{ batchIndex: 'asc' }],
+      include: DAILY_SESSION_INCLUDE
+    });
+  }
+
+  /** Summary: This method loads the latest unfinished learning batch for the current UTC day. */
+  private findLatestActiveSession(userId: string) {
+    const { start, end } = createTodayRange();
+    return this.prismaService.dailySession.findFirst({
+      where: {
+        userId,
+        sessionDate: {
+          gte: start,
+          lt: end
         },
-        articles: true,
-        readingQuestions: {
-          include: {
-            answer: true
-          }
+        status: {
+          not: 'COMPLETED'
         }
-      }
+      },
+      orderBy: [{ batchIndex: 'desc' }],
+      include: DAILY_SESSION_INCLUDE
+    });
+  }
+
+  /** Summary: This method loads one batch from today so concurrent creators can reuse it after a unique-conflict race. */
+  private findTodaySessionByBatchIndex(userId: string, batchIndex: number) {
+    const { start, end } = createTodayRange();
+    return this.prismaService.dailySession.findFirst({
+      where: {
+        userId,
+        batchIndex,
+        sessionDate: {
+          gte: start,
+          lt: end
+        }
+      },
+      include: DAILY_SESSION_INCLUDE
     });
   }
 }
@@ -222,7 +285,7 @@ function isUniqueSessionConstraintError(error: unknown): boolean {
   }
 
   const target = Array.isArray(prismaError.meta?.target) ? prismaError.meta?.target : [];
-  return target.includes('userId') && target.includes('sessionDate');
+  return target.includes('userId') && target.includes('sessionDate') && target.includes('batchIndex');
 }
 
 /** Summary: This helper shuffles a list in place-safe form before persistence and article generation. */
@@ -236,22 +299,7 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 /** Summary: This helper converts one Prisma daily-session aggregate into the response shape used by the frontend. */
-function mapDailySession(session: Prisma.DailySessionGetPayload<{
-  include: {
-    words: {
-      include: {
-        vocabularyItem: true;
-        reviewRound: true;
-      };
-    };
-    articles: true;
-    readingQuestions: {
-      include: {
-        answer: true;
-      };
-    };
-  };
-}>) {
+function mapDailySession(session: DailySessionRecord) {
   const sortedWords = [...session.words];
   const sortedArticles = [...session.articles].sort((left, right) => left.orderIndex - right.orderIndex);
   const sortedQuestions = [...session.readingQuestions];
@@ -262,6 +310,7 @@ function mapDailySession(session: Prisma.DailySessionGetPayload<{
     bookId: session.bookId,
     studyPlanId: session.studyPlanId,
     sessionDate: session.sessionDate.toISOString().slice(0, 10),
+    batchIndex: session.batchIndex,
     status: session.status,
     articleStyle: session.articleStyle,
     words: sortedWords.map((word) => {
