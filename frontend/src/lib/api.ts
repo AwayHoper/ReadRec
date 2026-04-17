@@ -1,4 +1,4 @@
-import { AuthResponse, BookWordPage, DailySession, ReadingQuestion, ReviewRoundResponse, StudyPlan, UserProfile, VocabularyBookSummary, WrongBookEntry } from "../types";
+import { AuthResponse, BookWordPage, DailySession, DashboardHomeResponse, ReadingQuestion, ReviewRoundResponse, StudyPlan, UserProfile, VocabularyBookSummary, WrongBookEntry } from "../types";
 
 const ACCESS_TOKEN_STORAGE_KEY = "readrec_access_token";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
@@ -125,6 +125,18 @@ export async function switchBook(bookId: string) {
 /** Summary: This function returns or initializes today's persisted daily session. */
 export async function getTodaySession(): Promise<DailySession> {
   return request<DailySession>("/daily-session/today");
+}
+
+/** Summary: This function returns the homepage aggregate payload for the authenticated user. */
+export async function getDashboardHome(): Promise<DashboardHomeResponse> {
+  return request<DashboardHomeResponse>("/dashboard/home");
+}
+
+/** Summary: This function continues the unfinished batch or creates the next same-day session batch. */
+export async function createNextSession(): Promise<DailySession> {
+  return request<DailySession>("/daily-session/today/next", {
+    method: "POST"
+  });
 }
 
 /** Summary: This function submits one article's unknown-word selections for round one. */

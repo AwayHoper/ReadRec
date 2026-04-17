@@ -26,6 +26,67 @@ type DailySessionRecord = Prisma.DailySessionGetPayload<{
   include: typeof DAILY_SESSION_INCLUDE;
 }>;
 
+type DailySessionResponse = {
+  id: string;
+  userId: string;
+  bookId: string;
+  studyPlanId: string;
+  sessionDate: string;
+  batchIndex: number;
+  status: DailySessionRecord['status'];
+  articleStyle: DailySessionRecord['articleStyle'];
+  words: Array<{
+    id: string;
+    vocabularyItemId: string;
+    type: DailySessionRecord['words'][number]['type'];
+    status: DailySessionRecord['words'][number]['status'];
+    isSelectedUnknown: boolean;
+    reviewAttempts: number;
+    word: string;
+    phonetic: string | null;
+    definitions: string[];
+    senses: ReturnType<typeof mapVocabularyItem>['senses'];
+  }>;
+  articles: Array<{
+    id: string;
+    sessionId: string;
+    title: string;
+    content: string;
+    summary: string;
+    translation: string;
+    coveredWordIds: string[];
+    orderIndex: number;
+  }>;
+  reviewRounds: Array<{
+    sessionWordId: string;
+    choices: string[];
+    correctAnswer: string;
+    explanation: string;
+    currentPhase: 'NOTES' | 'QUIZ' | 'PASSED';
+    isPassed: boolean;
+    word: string;
+    phonetic: string;
+    definitions: string[];
+    senses: ReturnType<typeof mapVocabularyItem>['senses'];
+  }>;
+  readingQuestions: Array<{
+    id: string;
+    sessionId: string;
+    sessionWordId: string;
+    prompt: string;
+    options: string[];
+    correctOption: string;
+    explanation: string;
+    translation: string;
+  }>;
+  readingAnswers: Array<{
+    questionId: string;
+    sessionWordId: string;
+    selectedOption: string;
+    isCorrect: boolean;
+  }>;
+};
+
 @Injectable()
 export class DailySessionService {
   constructor(
@@ -337,7 +398,7 @@ function shuffleArray<T>(items: T[]): T[] {
 }
 
 /** Summary: This helper converts one Prisma daily-session aggregate into the response shape used by the frontend. */
-function mapDailySession(session: DailySessionRecord) {
+function mapDailySession(session: DailySessionRecord): DailySessionResponse {
   const sortedWords = [...session.words];
   const sortedArticles = [...session.articles].sort((left, right) => left.orderIndex - right.orderIndex);
   const sortedQuestions = [...session.readingQuestions];

@@ -14,5 +14,15 @@ export interface ReviewRound { sessionWordId: string; choices: string[]; correct
 export interface ReviewRoundResponse { sessionId: string; status: DailySessionStatus; rounds: ReviewRound[]; }
 export interface ReadingQuestion { id: string; sessionId: string; sessionWordId: string; prompt: string; options: string[]; correctOption: string; explanation: string; translation: string; }
 export interface ReadingAnswer { questionId: string; sessionWordId: string; selectedOption: string; isCorrect: boolean; }
-export interface DailySession { id: string; userId: string; bookId: string; studyPlanId: string; sessionDate: string; status: DailySessionStatus; articleStyle: 'EXAM' | 'NEWS' | 'TED'; words: SessionWordSummary[]; articles: GeneratedArticle[]; reviewRounds: ReviewRound[]; readingQuestions: ReadingQuestion[]; readingAnswers: ReadingAnswer[]; }
+export interface DailySession { id: string; userId: string; bookId: string; studyPlanId: string; sessionDate: string; batchIndex: number; status: DailySessionStatus; articleStyle: 'EXAM' | 'NEWS' | 'TED'; words: SessionWordSummary[]; articles: GeneratedArticle[]; reviewRounds: ReviewRound[]; readingQuestions: ReadingQuestion[]; readingAnswers: ReadingAnswer[]; }
+export interface DashboardHomeActiveBook { id: string; key: string; title: string; description: string; totalWordCount: number; learnedCount: number; reviewedCount: number; }
+export interface DashboardHomeTodayTarget { newCount: number; reviewCount: number; totalCount: number; }
+export interface DashboardHomeToday { date: string; state: 'pending' | 'completed'; target: DashboardHomeTodayTarget; learnedUniqueWordCount: number; completedBatchCount: number; }
+export interface DashboardHomeCta { mode: 'start' | 'continue'; label: string; }
+export interface DashboardHomeMastery { familiarCount: number; fuzzyCount: number; unseenCount: number; totalWordCount: number; }
+export interface DashboardHomeCalendarDay { date: string; completed: boolean; completedBatchCount: number; learnedUniqueWordCount: number; intensity: 'none' | 'low' | 'medium' | 'high'; }
+export interface DashboardHomeStreaks { calendar: DashboardHomeCalendarDay[]; totalDays: number; currentStreakDays: number; remainingDays: number | null; estimatedFinishDate: string | null; }
+export interface DashboardHomeEncouragement { tone: 'encourage' | 'praise' | 'celebrate'; message: string; }
+export interface DashboardHomeHistory { lastCompletedDate: string | null; lastCompletedBatchWordCount: number; activeBookTitle: string | null; }
+export interface DashboardHomeResponse { activeBook: DashboardHomeActiveBook | null; plan: StudyPlan | null; today: DashboardHomeToday; cta: DashboardHomeCta; mastery: DashboardHomeMastery; streaks: DashboardHomeStreaks; encouragement: DashboardHomeEncouragement; history: DashboardHomeHistory; }
 export interface WrongBookEntry { id: string; wordId: string; word: string; definitions: string[]; phonetic: string; }

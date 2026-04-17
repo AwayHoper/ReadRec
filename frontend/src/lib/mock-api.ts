@@ -8,7 +8,7 @@ const books: VocabularyBookSummary[] = [
 let auth: AuthResponse | null = null;
 let plan: StudyPlan = { id: 'plan-1', userId: 'user-1', bookId: 'book-kaoyan', dailyWordCount: 6, newWordRatio: 2, reviewWordRatio: 1, articleStyle: 'EXAM' };
 let session: DailySession = {
-  id: 'session-1', userId: 'user-1', bookId: 'book-kaoyan', studyPlanId: 'plan-1', sessionDate: new Date().toISOString().slice(0, 10), status: 'ROUND_ONE', articleStyle: 'EXAM',
+  id: 'session-1', userId: 'user-1', bookId: 'book-kaoyan', studyPlanId: 'plan-1', sessionDate: new Date().toISOString().slice(0, 10), batchIndex: 1, status: 'ROUND_ONE', articleStyle: 'EXAM',
   words: [
     { id: 'sw1', vocabularyItemId: 'w1', type: 'NEW', status: 'PENDING', isSelectedUnknown: false, reviewAttempts: 0 },
     { id: 'sw2', vocabularyItemId: 'w2', type: 'NEW', status: 'PENDING', isSelectedUnknown: false, reviewAttempts: 0 },
