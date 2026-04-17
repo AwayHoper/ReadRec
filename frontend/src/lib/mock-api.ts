@@ -7,6 +7,10 @@ const books: VocabularyBookSummary[] = [
 ];
 let auth: AuthResponse | null = null;
 let plan: StudyPlan = { id: 'plan-1', userId: 'user-1', bookId: 'book-kaoyan', dailyWordCount: 6, newWordRatio: 2, reviewWordRatio: 1, articleStyle: 'EXAM' };
+let completedBatchCountToday = 0;
+const learnedWordIdsToday = new Set<string>();
+let lastCompletedBatchWordCount = 0;
+let lastCompletedDate: string | null = null;
 let session: DailySession = {
   id: 'session-1', userId: 'user-1', bookId: 'book-kaoyan', studyPlanId: 'plan-1', sessionDate: new Date().toISOString().slice(0, 10), batchIndex: 1, status: 'ROUND_ONE', articleStyle: 'EXAM',
   words: [
@@ -28,6 +32,17 @@ let session: DailySession = {
   readingAnswers: []
 };
 let wrongBook: WrongBookEntry[] = [];
+
+function buildTodayTarget(activePlan: StudyPlan) {
+  const ratioTotal = activePlan.newWordRatio + activePlan.reviewWordRatio;
+  const newCount = ratioTotal === 0 ? 0 : Math.round((activePlan.dailyWordCount * activePlan.newWordRatio) / ratioTotal);
+
+  return {
+    newCount,
+    reviewCount: Math.max(0, activePlan.dailyWordCount - newCount),
+    totalCount: activePlan.dailyWordCount
+  };
+}
 /** Summary: This function simulates user registration and returns a mock auth payload. */
 export async function register(email: string, _password: string): Promise<AuthResponse> { auth = { accessToken: 'mock-token', user: { id: 'user-1', email, activeBookId: plan.bookId } }; return auth; }
 /** Summary: This function simulates user login and returns a mock auth payload. */
@@ -45,7 +60,8 @@ export async function getTodaySession(): Promise<DailySession> { return session;
 /** Summary: This function returns the mock homepage aggregate payload. */
 export async function getDashboardHome(): Promise<DashboardHomeResponse> {
   const activeBook = books.find((book) => book.id === plan.bookId) ?? null;
-  const hasCompletedBatchToday = session.status === 'COMPLETED';
+  const hasCompletedBatchToday = completedBatchCountToday > 0;
+  const todayTarget = buildTodayTarget(plan);
 
   return {
     activeBook: activeBook ? {
@@ -61,13 +77,9 @@ export async function getDashboardHome(): Promise<DashboardHomeResponse> {
     today: {
       date: session.sessionDate,
       state: hasCompletedBatchToday ? 'completed' : 'pending',
-      target: {
-        newCount: 4,
-        reviewCount: 2,
-        totalCount: plan.dailyWordCount
-      },
-      learnedUniqueWordCount: hasCompletedBatchToday ? session.words.length : 0,
-      completedBatchCount: hasCompletedBatchToday ? session.batchIndex : 0
+      target: todayTarget,
+      learnedUniqueWordCount: learnedWordIdsToday.size,
+      completedBatchCount: completedBatchCountToday
     },
     cta: {
       mode: hasCompletedBatchToday ? 'continue' : 'start',
@@ -83,8 +95,8 @@ export async function getDashboardHome(): Promise<DashboardHomeResponse> {
       calendar: [{
         date: session.sessionDate,
         completed: hasCompletedBatchToday,
-        completedBatchCount: hasCompletedBatchToday ? session.batchIndex : 0,
-        learnedUniqueWordCount: hasCompletedBatchToday ? session.words.length : 0,
+        completedBatchCount: completedBatchCountToday,
+        learnedUniqueWordCount: learnedWordIdsToday.size,
         intensity: hasCompletedBatchToday ? 'medium' : 'none'
       }],
       totalDays: hasCompletedBatchToday ? 1 : 0,
@@ -97,8 +109,8 @@ export async function getDashboardHome(): Promise<DashboardHomeResponse> {
       message: hasCompletedBatchToday ? '今天已经完成一轮，继续保持。' : '开始今天的学习，保持节奏。'
     },
     history: {
-      lastCompletedDate: hasCompletedBatchToday ? session.sessionDate : null,
-      lastCompletedBatchWordCount: hasCompletedBatchToday ? session.words.length : 0,
+      lastCompletedDate,
+      lastCompletedBatchWordCount,
       activeBookTitle: activeBook?.title ?? null
     }
   };
@@ -142,7 +154,15 @@ export async function createNextSession(): Promise<DailySession> {
   return session;
 }
 /** Summary: This function simulates selecting unknown words during round one. */
-export async function submitSelections(_articleId: string, sessionWordIds: string[]) { session.words = session.words.map((word) => ({ ...word, isSelectedUnknown: sessionWordIds.includes(word.id), status: sessionWordIds.includes(word.id) ? 'NEEDS_REVIEW' : 'PASSED_ROUND_ONE' })); session.status = 'ROUND_TWO'; return session; }
+export async function submitSelections(articleId: string, sessionWordIds: string[]) {
+  if (!session.articles.some((article) => article.id === articleId)) {
+    return session;
+  }
+
+  session.words = session.words.map((word) => ({ ...word, isSelectedUnknown: sessionWordIds.includes(word.id), status: sessionWordIds.includes(word.id) ? 'NEEDS_REVIEW' : 'PASSED_ROUND_ONE' }));
+  session.status = 'ROUND_TWO';
+  return session;
+}
 /** Summary: This function returns the current review-round state. */
 export async function getReviewRounds(): Promise<ReviewRoundResponse> { return { sessionId: session.id, status: session.status, rounds: session.reviewRounds }; }
 /** Summary: This function simulates one review answer and progresses the flow when all answers pass. */
@@ -152,7 +172,16 @@ export async function getReadingQuestions(): Promise<ReadingQuestion[]> { return
 /** Summary: This function simulates one reading-question answer submission. */
 export async function answerReadingQuestion(questionId: string, selectedOption: string) { const question = session.readingQuestions.find((item) => item.id === questionId)!; const existingIndex = session.readingAnswers.findIndex((item) => item.questionId === questionId); const answer = { questionId, sessionWordId: question.sessionWordId, selectedOption, isCorrect: selectedOption === question.correctOption }; if (existingIndex >= 0) { session.readingAnswers[existingIndex] = answer; } else { session.readingAnswers.push(answer); } return answer; }
 /** Summary: This function returns the final summary payload for the learning session. */
-export async function completeLearning() { session.status = 'COMPLETED'; return { session, words: session.words.map((word) => ({ sessionWordId: word.id, wordId: word.vocabularyItemId, word: word.vocabularyItemId, definitions: ['示例释义'], selectedUnknown: word.isSelectedUnknown })) }; }
+export async function completeLearning() {
+  session.status = 'COMPLETED';
+  completedBatchCountToday += 1;
+  for (const word of session.words) {
+    learnedWordIdsToday.add(word.vocabularyItemId);
+  }
+  lastCompletedBatchWordCount = session.words.length;
+  lastCompletedDate = session.sessionDate;
+  return { session, words: session.words.map((word) => ({ sessionWordId: word.id, wordId: word.vocabularyItemId, word: word.vocabularyItemId, definitions: ['示例释义'], selectedUnknown: word.isSelectedUnknown })) };
+}
 /** Summary: This function returns the wrong-book list. */
 export async function getWrongBook() { return wrongBook; }
 /** Summary: This function marks selected words into the wrong-book list. */
