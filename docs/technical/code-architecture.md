@@ -126,6 +126,14 @@ ReadRec 已完成学习闭环 MVP 的前后端脚手架与核心流程实现：
   - `ROUND_THREE` -> `/learn/questions`
 - 首页日期字段来自后端的 `YYYY-MM-DD` 字符串，前端需按本地安全方式解析，不能直接用 `new Date(dateString)` 渲染
 
+## 表单校验与 Prisma 环境约定
+
+- 后端启用了 `ValidationPipe({ whitelist: true, transform: true })`
+- 因此所有需要保留的 DTO 字段都必须显式添加校验装饰器；否则字段会在进入 service 前被白名单剔除
+- `study-plan` 的 `UpdateStudyPlanDto.bookId` 已加入 `@IsString()` 与 `@IsNotEmpty()`，用于保证学习计划保存时不会丢失当前词库
+- Prisma 版本当前统一固定在 `backend` workspace 的 `6.19.3`
+- 仓库根目录不承载 Prisma 依赖，避免误装 Prisma 7 后让 `schema.prisma` 与 Client 生成方式失配
+
 ## 后续维护规则
 
 - 若前端真实接口返回结构变化，需同步更新本文档中的数据流说明

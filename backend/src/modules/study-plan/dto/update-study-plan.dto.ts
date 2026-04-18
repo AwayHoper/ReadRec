@@ -1,7 +1,9 @@
-import { IsEnum, IsInt, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
 
 export class UpdateStudyPlanDto {
   /** Summary: This field captures the selected active book identifier. */
+  @IsString()
+  @IsNotEmpty()
   bookId!: string;
 
   /** Summary: This field captures the target number of daily words. */
