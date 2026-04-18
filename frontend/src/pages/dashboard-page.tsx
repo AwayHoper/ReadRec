@@ -2,7 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
-import { DashboardHomeCalendarDay, DashboardHomeCta, DashboardHomeEncouragement } from '../types';
+import { DailySessionStatus, DashboardHomeCalendarDay, DashboardHomeCta, DashboardHomeEncouragement } from '../types';
+
+/** Summary: This helper parses backend date-only strings without UTC day shifting. */
+function parseDashboardDate(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  return new Date(value);
+}
 
 /** Summary: This helper formats one ISO date into a localized long-form label. */
 function formatLongDateLabel(date: string) {
@@ -11,7 +21,7 @@ function formatLongDateLabel(date: string) {
     month: 'long',
     day: 'numeric',
     weekday: 'short'
-  }).format(new Date(date));
+  }).format(parseDashboardDate(date));
 }
 
 /** Summary: This helper formats one ISO date into a compact month-day label. */
@@ -19,7 +29,20 @@ function formatShortDateLabel(date: string) {
   return new Intl.DateTimeFormat('zh-CN', {
     month: 'numeric',
     day: 'numeric'
-  }).format(new Date(date));
+  }).format(parseDashboardDate(date));
+}
+
+/** Summary: This helper resolves the correct learning route from one session status. */
+function getLearningRoute(status: DailySessionStatus) {
+  if (status === 'ROUND_TWO') {
+    return '/learn/review';
+  }
+
+  if (status === 'ROUND_THREE') {
+    return '/learn/questions';
+  }
+
+  return '/learn/read';
 }
 
 /** Summary: This helper returns the dashboard copy for today's completion state. */
@@ -114,7 +137,7 @@ export function DashboardPage() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['dashboard-home'] });
-      navigate('/learn/read');
+      navigate(nextSession ? getLearningRoute(nextSession.status) : '/learn/read');
     }
   });
 
