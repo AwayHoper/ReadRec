@@ -78,6 +78,15 @@ function getCtaButtonStyles(mode: DashboardHomeCta['mode']) {
     : 'bg-coral text-white hover:bg-coral/90';
 }
 
+/** Summary: This helper returns the main-card copy for missing learning setup. */
+function getSetupStateCopy() {
+  return {
+    label: '去设置学习计划',
+    title: '先完成词库和计划设置，再开始今天的学习。',
+    description: '当前还缺少激活词库或学习计划，先去“计划”页配置后再进入学习流程。'
+  };
+}
+
 /** Summary: This component renders the authenticated dashboard as the new learning hub. */
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -89,6 +98,10 @@ export function DashboardPage() {
 
   const ctaMutation = useMutation({
     mutationFn: async (mode: DashboardHomeCta['mode']) => {
+      if (mode === 'start') {
+        return api.startTodaySession();
+      }
+
       if (mode === 'continue') {
         return api.createNextSession();
       }
@@ -139,7 +152,16 @@ export function DashboardPage() {
   }
 
   const { activeBook, cta, encouragement, history, mastery, plan, streaks, today } = dashboardHomeQuery.data;
+  const hasLearningSetup = Boolean(activeBook && plan);
   const todayStateCopy = getTodayStateCopy(today.state);
+  const setupStateCopy = getSetupStateCopy();
+  const primaryCardTitle = hasLearningSetup ? cta.label : setupStateCopy.title;
+  const primaryCardDescription = hasLearningSetup
+    ? cta.mode === 'continue'
+      ? '继续前会先为今天准备下一轮学习内容，然后直接进入学习流程。'
+      : '开始前会先正式启动今天的学习批次，然后进入第一轮学习。'
+    : setupStateCopy.description;
+  const primaryButtonLabel = hasLearningSetup ? cta.label : setupStateCopy.label;
 
   return (
     <div className="space-y-6">
@@ -181,20 +203,18 @@ export function DashboardPage() {
           </div>
 
           <div className="rounded-3xl bg-white p-5 text-black shadow-xl">
-            <p className="text-sm font-medium text-black/55">今日主卡片</p>
-            <h2 className="mt-3 text-2xl font-semibold text-ink">{cta.label}</h2>
-            <p className="mt-2 text-sm leading-7 text-black/70">
-              {cta.mode === 'continue'
-                ? '继续前会先为今天准备下一轮学习内容，然后直接进入学习流程。'
-                : '直接进入今天的学习流程，不会额外创建新的学习批次。'}
-            </p>
+            <p className="text-sm font-medium text-black/55">{hasLearningSetup ? '今日主卡片' : '开始前设置'}</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">{primaryCardTitle}</h2>
+            <p className="mt-2 text-sm leading-7 text-black/70">{primaryCardDescription}</p>
             <button
               type="button"
-              onClick={handlePrimaryAction}
+              onClick={hasLearningSetup ? handlePrimaryAction : () => navigate('/plans')}
               disabled={ctaMutation.isPending}
-              className={`mt-6 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition ${getCtaButtonStyles(cta.mode)} ${ctaMutation.isPending ? 'cursor-wait opacity-70' : ''}`}
+              className={`mt-6 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition ${
+                hasLearningSetup ? getCtaButtonStyles(cta.mode) : 'bg-ink text-sand hover:bg-ink/90'
+              } ${ctaMutation.isPending ? 'cursor-wait opacity-70' : ''}`}
             >
-              {ctaMutation.isPending ? '正在进入学习流程...' : cta.label}
+              {ctaMutation.isPending ? '正在进入学习流程...' : primaryButtonLabel}
             </button>
             {ctaMutation.error ? <p className="mt-3 text-sm text-red-600">进入学习流程失败，请稍后重试。</p> : null}
             <div className="mt-6 rounded-2xl bg-sand p-4">
@@ -221,7 +241,7 @@ export function DashboardPage() {
             </div>
             <div className="rounded-2xl bg-white p-5 ring-1 ring-black/10">
               <p className="text-sm font-medium text-black/55">完成状态</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{today.state === 'completed' ? '已完成' : '进行中'}</p>
+              <p className="mt-2 text-3xl font-semibold text-ink">{today.state === 'completed' ? '已完成' : '待开始'}</p>
               <p className="mt-2 text-sm leading-7 text-black/70">
                 今日已完成 {today.completedBatchCount} 轮，累计学习 {today.learnedUniqueWordCount} 个词。
               </p>
@@ -231,7 +251,7 @@ export function DashboardPage() {
 
         <SectionCard title="学习鼓励">
           <div className={`rounded-3xl border p-5 ${getEncouragementStyles(encouragement.tone)}`}>
-            <p className="text-sm font-medium uppercase tracking-[0.2em]">Encouragement</p>
+            <p className="text-sm font-medium tracking-[0.2em]">今日鼓励</p>
             <p className="mt-3 text-2xl font-semibold leading-tight">{encouragement.message}</p>
             <p className="mt-4 text-sm leading-7 opacity-80">
               {history.lastCompletedDate

@@ -127,6 +127,13 @@ export async function getTodaySession(): Promise<DailySession> {
   return request<DailySession>("/daily-session/today");
 }
 
+/** Summary: This function starts today's session and moves the current batch into round one. */
+export async function startTodaySession(): Promise<DailySession> {
+  return request<DailySession>("/daily-session/today/start", {
+    method: "POST"
+  });
+}
+
 /** Summary: This function returns the homepage aggregate payload for the authenticated user. */
 export async function getDashboardHome(): Promise<DashboardHomeResponse> {
   return request<DashboardHomeResponse>("/dashboard/home");
