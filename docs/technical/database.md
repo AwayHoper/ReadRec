@@ -55,7 +55,8 @@
 - `VocabularyItem(bookId, word)` 唯一索引
 - `UserBookProgress(userId, bookId)` 唯一索引
 - `StudyPlan(userId, bookId)` 唯一索引
-- `DailySession(userId, sessionDate)` 唯一索引
+- `DailySession(userId, sessionDate, batchIndex)` 唯一索引
+- `DailySession(userId, sessionDate)` 普通索引，用于当天批次查询
 - `ArticleUnknownWordSelection(articleId, sessionWordId)` 唯一索引
 - `WrongBookEntry(userId, vocabularyItemId)` 唯一索引
 
@@ -103,6 +104,30 @@
 - 若一侧候选不足，由另一侧补齐
 - 生词本条目在复习词候选中优先级更高
 - 最终选中的单词在写入 `DailySessionWord` 前会做乱序处理
+
+## 同日多批次会话约定
+
+- `DailySession.batchIndex` 表示同一天内的学习批次序号，从 `1` 开始
+- 同一用户同一天可存在多个 `DailySession`
+- 历史数据迁移时，旧的单日单批次记录统一回填为 `batchIndex = 1`
+- 首页“今日是否完成”不依赖当前活动批次状态，而依赖当天是否存在至少一个 `COMPLETED` 批次
+
+## 首页聚合数据口径
+
+- `GET /dashboard/home` 通过聚合查询生成首页数据
+- `today.state`
+  - 当天无任何已完成批次 -> `pending`
+  - 当天至少有一个已完成批次 -> `completed`
+- `today.learnedUniqueWordCount`
+  - 统计当天所有已完成批次中的去重单词数
+- `streaks.currentStreakDays`
+  - 从“今天”开始向前连续存在完成记录的天数
+- `streaks.remainingDays` / `estimatedFinishDate`
+  - 基于“剩余新词数 / 每日新词目标”计算，而不是基于每日总量
+- `encouragement.tone`
+  - `encourage`: 今天完成批次数为 `0`
+  - `praise`: 今天完成批次数为 `1`
+  - `celebrate`: 今天完成批次数大于等于 `2`
 
 ## 当前落库状态
 

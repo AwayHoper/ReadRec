@@ -89,6 +89,43 @@ ReadRec 已完成学习闭环 MVP 的前后端脚手架与核心流程实现：
 - 动态预测使用当前词库 `totalWordCount - learnedCount` 作为剩余新词量
 - 切换词库后，若该词库已有保存计划，则恢复该计划映射出的比例和方案档位；否则回退到默认档位
 
+## v0.6.0 首页学习中枢
+
+- 首页改为通过 `GET /dashboard/home` 读取聚合数据，而不是分别请求 `books / plan / session`
+- `dashboard` 模块统一聚合：
+  - 当前激活词库
+  - 当前计划摘要
+  - 今日完成状态
+  - 今日目标与已完成去重词数
+  - 掌握度统计
+  - 打卡日历与连续天数
+  - 鼓励文案状态
+  - 最近一次完成记录
+- 前端首页通过 `DashboardHomeResponse` 直接渲染，不再本地重算目标值与预计完成日期
+
+## 同日多批次学习约定
+
+- `DailySession` 现在使用 `batchIndex` 区分同一天内的多个学习批次
+- `GET /daily-session/today` 保持读语义：
+  - 优先返回当天最新未完成批次
+  - 若当天没有未完成批次，则返回当天最后一个已有批次
+  - 仅当当天完全没有批次时，才会初始化第一批
+- `POST /daily-session/today/start`
+  - 用于开始当天的首个/当前待开始批次
+- `POST /daily-session/today/next`
+  - 用于“再学一轮”，显式进入同日下一批次
+- `learning` 模块始终围绕当天最新未完成批次继续二轮、三轮与完成逻辑
+
+## 首页 CTA 路由约定
+
+- 当首页 CTA 为 `start` 时，前端先调用 `startTodaySession()`
+- 当首页 CTA 为 `continue` 时，前端先调用 `createNextSession()`
+- 首页拿到返回的 session 后，应按 session 状态恢复到对应轮次：
+  - `PENDING` / `ROUND_ONE` / `COMPLETED` -> `/learn/read`
+  - `ROUND_TWO` -> `/learn/review`
+  - `ROUND_THREE` -> `/learn/questions`
+- 首页日期字段来自后端的 `YYYY-MM-DD` 字符串，前端需按本地安全方式解析，不能直接用 `new Date(dateString)` 渲染
+
 ## 后续维护规则
 
 - 若前端真实接口返回结构变化，需同步更新本文档中的数据流说明
