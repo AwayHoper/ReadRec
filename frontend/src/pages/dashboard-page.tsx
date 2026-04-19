@@ -2,7 +2,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../lib/api';
 import { SectionCard } from '../components/section-card';
-import { DailySessionStatus, DashboardHomeCalendarDay, DashboardHomeCta, DashboardHomeEncouragement } from '../types';
+import {
+  DailySessionStatus,
+  DashboardHomeCalendarDay,
+  DashboardHomeCta,
+  DashboardHomeEncouragement,
+  DashboardHomeMastery
+} from '../types';
+
+/** Summary: This constant defines the heatmap weekday labels for the dashboard calendar. */
+const WEEKDAY_LABELS = ['一', '三', '五', '日'];
 
 /** Summary: This helper parses backend date-only strings without UTC day shifting. */
 function parseDashboardDate(value: string) {
@@ -50,67 +59,277 @@ function getTodayStateCopy(state: 'pending' | 'completed') {
   return state === 'completed'
     ? {
         badge: '今日已完成',
-        title: '今天已经学完一轮，节奏保持得很好。',
-        description: '如果还有余力，可以继续下一轮同日学习。'
+        title: '今天已经进入学习状态，继续往前推进就好。'
       }
     : {
         badge: '今日待开始',
-        title: '今天的学习目标已经准备好了。',
-        description: '从当前词库继续，按计划完成今天这一轮。'
+        title: '今天先把这一轮稳稳完成。'
       };
-}
-
-/** Summary: This helper returns tone-specific styles for the encouragement block. */
-function getEncouragementStyles(tone: DashboardHomeEncouragement['tone']) {
-  if (tone === 'celebrate') {
-    return 'border-amber-300 bg-amber-50 text-amber-950';
-  }
-
-  if (tone === 'praise') {
-    return 'border-emerald-300 bg-emerald-50 text-emerald-950';
-  }
-
-  return 'border-sky-300 bg-sky-50 text-sky-950';
-}
-
-/** Summary: This helper returns one color treatment for a calendar cell. */
-function getCalendarCellStyles(day: DashboardHomeCalendarDay) {
-  if (!day.completed) {
-    return 'border-black/10 bg-white text-black/55';
-  }
-
-  if (day.intensity === 'high') {
-    return 'border-emerald-600 bg-emerald-600 text-white';
-  }
-
-  if (day.intensity === 'medium') {
-    return 'border-emerald-500 bg-emerald-500/85 text-white';
-  }
-
-  if (day.intensity === 'low') {
-    return 'border-emerald-300 bg-emerald-100 text-emerald-950';
-  }
-
-  return 'border-black/10 bg-white text-black/55';
-}
-
-/** Summary: This helper returns button copy and styling for the learning CTA. */
-function getCtaButtonStyles(mode: DashboardHomeCta['mode']) {
-  return mode === 'continue'
-    ? 'bg-ink text-sand hover:bg-ink/90'
-    : 'bg-coral text-white hover:bg-coral/90';
 }
 
 /** Summary: This helper returns the main-card copy for missing learning setup. */
 function getSetupStateCopy() {
   return {
     label: '去设置学习计划',
-    title: '先完成词库和计划设置，再开始今天的学习。',
-    description: '当前还缺少激活词库或学习计划，先去“计划”页配置后再进入学习流程。'
+    title: '先完成词库和计划设置，再开始今天的学习。'
   };
 }
 
-/** Summary: This component renders the authenticated dashboard as the new learning hub. */
+/** Summary: This helper returns button copy and styling for the learning CTA. */
+function getCtaButtonStyles(mode: DashboardHomeCta['mode']) {
+  return mode === 'continue'
+    ? 'bg-ink text-sand shadow-lg shadow-ink/20 hover:bg-ink/90'
+    : 'bg-coral text-white shadow-lg shadow-coral/20 hover:bg-coral/90';
+}
+
+/** Summary: This helper maps encouragement tone to one short supporting line. */
+function getEncouragementLine(encouragement: DashboardHomeEncouragement, batchCount: number) {
+  if (encouragement.tone === 'celebrate' || batchCount >= 2) {
+    return '今天已经超额完成，顺着状态再学一轮会更轻松。';
+  }
+
+  if (encouragement.tone === 'praise') {
+    return '今日计划已经拿下，下一轮适合趁热打铁。';
+  }
+
+  return encouragement.message;
+}
+
+/** Summary: This helper computes SVG donut segments from mastery counts. */
+function getMasterySegments(mastery: DashboardHomeMastery) {
+  const total = Math.max(mastery.totalWordCount, 1);
+  const circumference = 2 * Math.PI * 42;
+  const values = [
+    { key: 'familiar', label: '熟悉', count: mastery.familiarCount, color: '#0f766e' },
+    { key: 'fuzzy', label: '模糊', count: mastery.fuzzyCount, color: '#f59e0b' },
+    { key: 'unseen', label: '陌生', count: mastery.unseenCount, color: '#cbd5e1' }
+  ];
+
+  let offset = 0;
+
+  return values.map((value) => {
+    const ratio = value.count / total;
+    const length = Math.max(ratio * circumference, value.count > 0 ? 6 : 0);
+    const segment = {
+      ...value,
+      ratio,
+      dashArray: `${length} ${circumference - length}`,
+      dashOffset: -offset
+    };
+
+    offset += length;
+    return segment;
+  });
+}
+
+/** Summary: This helper picks a background treatment from one day intensity level. */
+function getCalendarIntensityStyles(day: DashboardHomeCalendarDay | null) {
+  if (!day || !day.completed || day.intensity === 'none') {
+    return 'bg-slate-100 text-slate-300';
+  }
+
+  if (day.intensity === 'high') {
+    return 'bg-emerald-700 text-white';
+  }
+
+  if (day.intensity === 'medium') {
+    return 'bg-emerald-500 text-white';
+  }
+
+  return 'bg-emerald-300 text-emerald-950';
+}
+
+/** Summary: This helper reshapes recent days into week columns for a contribution-style heatmap. */
+function buildHeatmapColumns(days: DashboardHomeCalendarDay[]) {
+  const sortedDays = [...days].sort((left, right) => left.date.localeCompare(right.date));
+  const leadingPadding = sortedDays.length > 0 ? (parseDashboardDate(sortedDays[0].date).getDay() + 6) % 7 : 0;
+  const padded: Array<DashboardHomeCalendarDay | null> = [];
+
+  for (let index = 0; index < leadingPadding; index += 1) {
+    padded.push(null);
+  }
+
+  padded.push(...sortedDays);
+
+  while (padded.length % 7 !== 0) {
+    padded.push(null);
+  }
+
+  const columns: Array<Array<DashboardHomeCalendarDay | null>> = [];
+  for (let index = 0; index < padded.length; index += 7) {
+    columns.push(padded.slice(index, index + 7));
+  }
+
+  return columns;
+}
+
+/** Summary: This component renders a compact donut chart for mastery distribution. */
+function MasteryDonut({ mastery }: { mastery: DashboardHomeMastery }) {
+  const segments = getMasterySegments(mastery);
+
+  return (
+    <div className="rounded-[2rem] border border-white/60 bg-white/80 p-5 text-slate-950 shadow-[0_24px_60px_rgba(27,31,59,0.12)] backdrop-blur">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-slate-500">掌握度</p>
+          <p className="mt-1 text-sm text-slate-500">当前词库 {mastery.totalWordCount} 词</p>
+        </div>
+        <div className="group relative">
+          <button
+            type="button"
+            aria-label="查看掌握度说明"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-sm font-semibold text-slate-500 transition hover:border-coral hover:text-coral"
+          >
+            i
+          </button>
+          <div className="pointer-events-none absolute right-0 top-10 z-10 w-64 rounded-2xl bg-slate-950 p-4 text-left text-xs leading-6 text-white opacity-0 shadow-2xl transition group-hover:opacity-100">
+            <p>熟悉：已复习的单词。</p>
+            <p>模糊：已学但还未复习的词。</p>
+            <p>陌生：未进行学习的单词。</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-6 flex items-center gap-6">
+        <div className="relative h-36 w-36 shrink-0">
+          <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
+            <circle cx="60" cy="60" r="42" fill="none" stroke="#e2e8f0" strokeWidth="12" />
+            {segments.map((segment) => (
+              <circle
+                key={segment.key}
+                cx="60"
+                cy="60"
+                r="42"
+                fill="none"
+                stroke={segment.color}
+                strokeWidth="12"
+                strokeLinecap="round"
+                strokeDasharray={segment.dashArray}
+                strokeDashoffset={segment.dashOffset}
+              />
+            ))}
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span className="text-3xl font-semibold text-ink">{Math.round((mastery.familiarCount / Math.max(mastery.totalWordCount, 1)) * 100)}%</span>
+            <span className="text-xs tracking-[0.2em] text-slate-500">熟悉占比</span>
+          </div>
+        </div>
+        <div className="grid flex-1 gap-3">
+          {segments.map((segment) => (
+            <div key={segment.key} className="rounded-2xl bg-slate-50/90 px-4 py-3 ring-1 ring-black/5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
+                  <span className="text-sm font-medium text-slate-700">{segment.label}</span>
+                </div>
+                <span className="text-sm text-slate-500">{Math.round(segment.ratio * 100)}%</span>
+              </div>
+              <p className="mt-1 text-lg font-semibold text-ink">{segment.count}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Summary: This component renders a compact GitHub-style activity heatmap. */
+function DashboardCalendar({
+  days,
+  totalDays,
+  currentStreakDays,
+  historySummary
+}: {
+  days: DashboardHomeCalendarDay[];
+  totalDays: number;
+  currentStreakDays: number;
+  historySummary: string;
+}) {
+  const columns = buildHeatmapColumns(days);
+
+  return (
+    <SectionCard title="学习日历" className="rounded-[2rem] border-[#e7dfcf] bg-[#fffdfa] shadow-[0_18px_50px_rgba(27,31,59,0.06)]">
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm text-slate-600">{historySummary}</p>
+          </div>
+          <div className="flex gap-6 text-sm text-slate-600">
+            <div>
+              <p className="text-slate-400">累计打卡</p>
+              <p className="mt-1 text-lg font-semibold text-ink">{totalDays} 天</p>
+            </div>
+            <div>
+              <p className="text-slate-400">连续打卡</p>
+              <p className="mt-1 text-lg font-semibold text-ink">{currentStreakDays} 天</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 overflow-x-auto">
+          <div className="grid gap-2 pt-7 text-[11px] text-slate-400">
+            {['一', '', '三', '', '五', '', '日'].map((label, index) => (
+              <span key={`${label}-${index}`} className="h-3 leading-3">
+                {label}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2 rounded-2xl bg-[#f8f4ea] px-3 py-3 ring-1 ring-[#ede3d0]">
+            {columns.map((column, columnIndex) => (
+              <div key={`column-${columnIndex}`} className="grid gap-2">
+                {column.map((cell, cellIndex) => (
+                  <div
+                    key={`${columnIndex}-${cellIndex}-${cell?.date ?? 'empty'}`}
+                    title={cell ? `${formatShortDateLabel(cell.date)} · ${cell.learnedUniqueWordCount} 词` : undefined}
+                    className={`h-3.5 w-3.5 rounded-[4px] transition ${getCalendarIntensityStyles(cell)}`}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+          <div className="flex items-center gap-2">
+            <span>学习强度</span>
+            <div className="flex items-center gap-1">
+              <span className="h-3 w-3 rounded-[4px] bg-slate-100" />
+              <span className="h-3 w-3 rounded-[4px] bg-emerald-300" />
+              <span className="h-3 w-3 rounded-[4px] bg-emerald-500" />
+              <span className="h-3 w-3 rounded-[4px] bg-emerald-700" />
+            </div>
+          </div>
+          <span>{days.length} 天记录</span>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+/** Summary: This component renders only the plan forecast beside the heatmap. */
+function PlanForecastPanel({
+  remainingDays,
+  estimatedFinishDate
+}: {
+  remainingDays: number | null;
+  estimatedFinishDate: string | null;
+}) {
+  return (
+    <SectionCard title="计划预测" className="rounded-[2rem] border-[#e5e7eb] bg-white shadow-[0_18px_50px_rgba(27,31,59,0.06)]">
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-[#f6f8fb] px-4 py-4 ring-1 ring-[#e7ecf3]">
+          <p className="text-sm text-slate-500">预计剩余天数</p>
+          <p className="mt-3 text-3xl font-semibold text-ink">{remainingDays ?? '-'}</p>
+          <p className="mt-2 text-sm text-slate-600">按当前计划强度和剩余新词量估算。</p>
+        </div>
+        <div className="rounded-2xl bg-[#fff8f2] px-4 py-4 ring-1 ring-[#f4e4d5]">
+          <p className="text-sm text-slate-500">预计完成日期</p>
+          <p className="mt-3 text-xl font-semibold text-ink">{estimatedFinishDate ? formatLongDateLabel(estimatedFinishDate) : '暂未给出'}</p>
+          <p className="mt-2 text-sm text-slate-600">切换计划档位后会实时更新。</p>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+/** Summary: This component renders the authenticated dashboard as the refined learning cockpit. */
 export function DashboardPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -178,178 +397,88 @@ export function DashboardPage() {
   const hasLearningSetup = Boolean(activeBook && plan);
   const todayStateCopy = getTodayStateCopy(today.state);
   const setupStateCopy = getSetupStateCopy();
-  const primaryCardTitle = hasLearningSetup ? cta.label : setupStateCopy.title;
-  const primaryCardDescription = hasLearningSetup
-    ? cta.mode === 'continue'
-      ? '继续前会先为今天准备下一轮学习内容，然后直接进入学习流程。'
-      : '开始前会先正式启动今天的学习批次，然后进入第一轮学习。'
-    : setupStateCopy.description;
-  const primaryButtonLabel = hasLearningSetup ? cta.label : setupStateCopy.label;
+  const buttonLabel = hasLearningSetup ? cta.label : setupStateCopy.label;
+  const encouragementLine = getEncouragementLine(encouragement, today.completedBatchCount);
+  const historySummary = history.lastCompletedDate
+    ? `最近一次完成于 ${formatShortDateLabel(history.lastCompletedDate)} · ${history.activeBookTitle ?? activeBook?.title ?? '当前词库'} · ${history.lastCompletedBatchWordCount} 词`
+    : '最近还没有完成记录，今天从第一轮开始就好。';
 
   return (
     <div className="space-y-6">
-      <SectionCard title="学习中枢" className="overflow-hidden border-0 bg-gradient-to-br from-ink via-ink to-coral/80 text-sand shadow-lg">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(18rem,1fr)]">
-          <div className="space-y-5">
+      <SectionCard title="学习中枢" className="relative overflow-hidden rounded-[2rem] border-[#e8dcc5] bg-gradient-to-br from-[#fbf6ea] via-[#f7eedf] to-[#fdfaf4] text-ink shadow-[0_26px_80px_rgba(27,31,59,0.10)]">
+        <div className="absolute -right-14 -top-16 h-44 w-44 rounded-full bg-sea/10 blur-3xl" />
+        <div className="absolute -bottom-12 left-24 h-40 w-40 rounded-full bg-coral/10 blur-3xl" />
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_24rem]">
+          <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold tracking-[0.2em] text-white/80">
-                {todayStateCopy.badge}
+              <span className="rounded-full border border-[#d8ccb5] bg-white/70 px-3 py-1 text-xs font-semibold tracking-[0.2em] text-[#5c5a52]">
+                {hasLearningSetup ? todayStateCopy.badge : '等待设置'}
               </span>
-              <span className="text-sm text-white/70">{formatLongDateLabel(today.date)}</span>
+              <span className="text-sm text-slate-500">{formatLongDateLabel(today.date)}</span>
             </div>
+
             <div className="space-y-3">
-              <h1 className="text-3xl font-semibold leading-tight md:text-4xl">{todayStateCopy.title}</h1>
-              <p className="max-w-2xl text-base leading-7 text-white/78">{todayStateCopy.description}</p>
+              <h1 className="max-w-3xl text-3xl font-semibold leading-tight md:text-4xl">
+                {hasLearningSetup ? todayStateCopy.title : setupStateCopy.title}
+              </h1>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">当前词库</p>
-                <p className="mt-2 text-lg font-semibold">{activeBook?.title ?? '暂未选择词库'}</p>
-                <p className="mt-1 text-sm text-white/65">{activeBook?.description ?? '请先完成学习计划配置。'}</p>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/70 bg-white/72 px-4 py-4 shadow-sm shadow-black/5 backdrop-blur">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">新词</p>
+                <p className="mt-3 text-3xl font-semibold">{today.target.newCount}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">今日目标</p>
-                <p className="mt-2 text-2xl font-semibold">{today.target.totalCount}</p>
-                <p className="mt-1 text-sm text-white/65">新词 {today.target.newCount} · 复习 {today.target.reviewCount}</p>
+              <div className="rounded-2xl border border-white/70 bg-white/72 px-4 py-4 shadow-sm shadow-black/5 backdrop-blur">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">复习</p>
+                <p className="mt-3 text-3xl font-semibold">{today.target.reviewCount}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">已学词数</p>
-                <p className="mt-2 text-2xl font-semibold">{today.learnedUniqueWordCount}</p>
-                <p className="mt-1 text-sm text-white/65">今日累计完成独立单词数</p>
+              <div className="rounded-2xl border border-white/70 bg-white/72 px-4 py-4 shadow-sm shadow-black/5 backdrop-blur">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">今日已学</p>
+                <p className="mt-3 text-3xl font-semibold">{today.learnedUniqueWordCount}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/60">完成轮次</p>
-                <p className="mt-2 text-2xl font-semibold">{today.completedBatchCount}</p>
-                <p className="mt-1 text-sm text-white/65">{plan ? `文章风格 ${plan.articleStyle}` : '尚未生成学习轮次'}</p>
-              </div>
+            </div>
+
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={hasLearningSetup ? handlePrimaryAction : () => navigate('/plans')}
+                disabled={ctaMutation.isPending}
+                className={`inline-flex min-w-40 items-center justify-center rounded-full px-6 py-3 text-sm font-semibold transition ${
+                  hasLearningSetup ? getCtaButtonStyles(cta.mode) : 'bg-ink text-sand hover:bg-ink/90'
+                } ${ctaMutation.isPending ? 'cursor-wait opacity-70' : ''}`}
+              >
+                {ctaMutation.isPending ? '正在进入学习流程...' : buttonLabel}
+              </button>
+              <p className="text-sm leading-6 text-slate-500">{encouragementLine}</p>
+            </div>
+
+            {ctaMutation.error ? <p className="text-sm text-red-600">进入学习流程失败，请稍后重试。</p> : null}
+
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              <span className="rounded-full border border-[#ddd2bd] bg-white/70 px-3 py-1">
+                {activeBook?.title ?? '暂未选择词库'}
+              </span>
+              <span>{plan ? `文章风格 ${plan.articleStyle}` : '请先完成计划设置'}</span>
             </div>
           </div>
 
-          <div className="rounded-3xl bg-white p-5 text-black shadow-xl">
-            <p className="text-sm font-medium text-black/55">{hasLearningSetup ? '今日主卡片' : '开始前设置'}</p>
-            <h2 className="mt-3 text-2xl font-semibold text-ink">{primaryCardTitle}</h2>
-            <p className="mt-2 text-sm leading-7 text-black/70">{primaryCardDescription}</p>
-            <button
-              type="button"
-              onClick={hasLearningSetup ? handlePrimaryAction : () => navigate('/plans')}
-              disabled={ctaMutation.isPending}
-              className={`mt-6 inline-flex w-full items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition ${
-                hasLearningSetup ? getCtaButtonStyles(cta.mode) : 'bg-ink text-sand hover:bg-ink/90'
-              } ${ctaMutation.isPending ? 'cursor-wait opacity-70' : ''}`}
-            >
-              {ctaMutation.isPending ? '正在进入学习流程...' : primaryButtonLabel}
-            </button>
-            {ctaMutation.error ? <p className="mt-3 text-sm text-red-600">进入学习流程失败，请稍后重试。</p> : null}
-            <div className="mt-6 rounded-2xl bg-sand p-4">
-              <p className="text-sm font-medium text-ink">最近完成记录</p>
-              <p className="mt-2 text-sm text-black/70">
-                {history.lastCompletedDate
-                  ? `${formatShortDateLabel(history.lastCompletedDate)} · ${history.activeBookTitle ?? activeBook?.title ?? '当前词库'} · ${history.lastCompletedBatchWordCount} 词`
-                  : '最近还没有完成记录，今天从第一轮开始就好。'}
-              </p>
-            </div>
-          </div>
+          <MasteryDonut mastery={mastery} />
         </div>
       </SectionCard>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-        <SectionCard title="进度概览">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl bg-sand p-5">
-              <p className="text-sm font-medium text-black/55">待完成目标</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{today.target.totalCount}</p>
-              <p className="mt-2 text-sm leading-7 text-black/70">
-                新词 {today.target.newCount} 个，复习 {today.target.reviewCount} 个，按计划完成这一轮即可达成今日目标。
-              </p>
-            </div>
-            <div className="rounded-2xl bg-white p-5 ring-1 ring-black/10">
-              <p className="text-sm font-medium text-black/55">完成状态</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{today.state === 'completed' ? '已完成' : '待开始'}</p>
-              <p className="mt-2 text-sm leading-7 text-black/70">
-                今日已完成 {today.completedBatchCount} 轮，累计学习 {today.learnedUniqueWordCount} 个词。
-              </p>
-            </div>
-          </div>
-        </SectionCard>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.85fr)]">
+        <DashboardCalendar
+          days={streaks.calendar}
+          totalDays={streaks.totalDays}
+          currentStreakDays={streaks.currentStreakDays}
+          historySummary={historySummary}
+        />
 
-        <SectionCard title="学习鼓励">
-          <div className={`rounded-3xl border p-5 ${getEncouragementStyles(encouragement.tone)}`}>
-            <p className="text-sm font-medium tracking-[0.2em]">今日鼓励</p>
-            <p className="mt-3 text-2xl font-semibold leading-tight">{encouragement.message}</p>
-            <p className="mt-4 text-sm leading-7 opacity-80">
-              {history.lastCompletedDate
-                ? `上次完成于 ${formatLongDateLabel(history.lastCompletedDate)}，完成了 ${history.lastCompletedBatchWordCount} 个词。`
-                : '这是新的起点，先完成今天这一轮，节奏自然会建立起来。'}
-            </p>
-          </div>
-        </SectionCard>
+        <PlanForecastPanel
+          remainingDays={streaks.remainingDays}
+          estimatedFinishDate={streaks.estimatedFinishDate}
+        />
       </div>
-
-      <SectionCard title="掌握度摘要">
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-950">
-            <p className="text-sm font-medium uppercase tracking-[0.2em]">熟悉</p>
-            <p className="mt-3 text-3xl font-semibold">{mastery.familiarCount}</p>
-            <p className="mt-2 text-sm leading-7 opacity-80">已进入稳定掌握区的词汇数量。</p>
-          </div>
-          <div className="rounded-2xl bg-amber-50 p-5 text-amber-950">
-            <p className="text-sm font-medium uppercase tracking-[0.2em]">模糊</p>
-            <p className="mt-3 text-3xl font-semibold">{mastery.fuzzyCount}</p>
-            <p className="mt-2 text-sm leading-7 opacity-80">仍需要继续巩固和复习的词汇数量。</p>
-          </div>
-          <div className="rounded-2xl bg-slate-100 p-5 text-slate-950">
-            <p className="text-sm font-medium uppercase tracking-[0.2em]">未见</p>
-            <p className="mt-3 text-3xl font-semibold">{mastery.unseenCount}</p>
-            <p className="mt-2 text-sm leading-7 opacity-80">当前词库总词数 {mastery.totalWordCount}，还有这些词等待接触。</p>
-          </div>
-        </div>
-      </SectionCard>
-
-      <SectionCard title="连续学习与日历">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,1.2fr)]">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl bg-sand p-5">
-              <p className="text-sm font-medium text-black/55">累计完成天数</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{streaks.totalDays}</p>
-            </div>
-            <div className="rounded-2xl bg-sand p-5">
-              <p className="text-sm font-medium text-black/55">当前连续天数</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{streaks.currentStreakDays}</p>
-            </div>
-            <div className="rounded-2xl bg-white p-5 ring-1 ring-black/10">
-              <p className="text-sm font-medium text-black/55">预计剩余天数</p>
-              <p className="mt-2 text-3xl font-semibold text-ink">{streaks.remainingDays ?? '-'}</p>
-            </div>
-            <div className="rounded-2xl bg-white p-5 ring-1 ring-black/10">
-              <p className="text-sm font-medium text-black/55">预计完成日期</p>
-              <p className="mt-2 text-lg font-semibold text-ink">
-                {streaks.estimatedFinishDate ? formatLongDateLabel(streaks.estimatedFinishDate) : '暂未给出'}
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-3xl bg-[#0f172a] p-5 text-white">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-white/65">学习日历</p>
-                <p className="mt-1 text-xl font-semibold">最近学习轨迹</p>
-              </div>
-              <p className="text-sm text-white/60">{streaks.calendar.length} 天记录</p>
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
-              {streaks.calendar.map((day) => (
-                <div key={day.date} className={`rounded-2xl border p-3 transition ${getCalendarCellStyles(day)}`}>
-                  <p className="text-xs font-medium uppercase tracking-[0.2em]">{formatShortDateLabel(day.date)}</p>
-                  <p className="mt-3 text-lg font-semibold">{day.completed ? '完成' : '未完成'}</p>
-                  <p className="mt-2 text-xs leading-6 opacity-80">
-                    {day.completedBatchCount} 轮 · {day.learnedUniqueWordCount} 词
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </SectionCard>
     </div>
   );
 }
